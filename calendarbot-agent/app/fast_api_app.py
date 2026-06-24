@@ -166,6 +166,7 @@ async def oauth2callback(request: Request):
         with session_scope() as db:
             user = get_or_create_user(db, telegram_id)
             user.google_credentials = credentials_json
+            user.default_calendar_id = "primary"
             db.commit()
 
         # Notify via Telegram bot
