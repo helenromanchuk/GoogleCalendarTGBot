@@ -82,6 +82,7 @@ def test_oauth_callback_csrf_valid() -> None:
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
         assert user is not None
         assert user.google_credentials == '{"token": "test-token"}'
+        assert user.default_calendar_id == "primary"
         db.close()
 
 
