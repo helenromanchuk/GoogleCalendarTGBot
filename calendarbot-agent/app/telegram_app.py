@@ -196,8 +196,28 @@ async def cmd_start(message: types.Message, state: FSMContext) -> None:
             )
             return
 
-    # Authenticated — delegate to /setcalendar
-    await cmd_setcalendar(message, state)
+        # Authenticated — check if default calendar is set
+        if not user.default_calendar_id:
+            # Not set — delegate to /setcalendar to pick one
+            await cmd_setcalendar(message, state)
+            return
+
+    # Authenticated and calendar is set — show welcome back message
+    await message.answer(
+        "🟢 <b>Welcome back to CalendarBot!</b>\n\n"
+        "You are fully connected and ready to go. Simply send me a message describing your event, and I will handle the rest!\n\n"
+        "💡 <b>Example Messages:</b>\n"
+        '• <i>"Doctor appointment next Monday at 10am"</i>\n'
+        '• <i>"Встреча с клиентом в пятницу в 11:00"</i>\n'  # noqa: RUF001
+        '• <i>"Dinner with family on Saturday at 7pm"</i>\n\n'
+        "⏱️ <b>Helpful Commands:</b>\n"
+        "• /upcoming — View your next 5 events\n"
+        "• /setcalendar — Change your default calendar\n"
+        "• /setduration — Change default event duration\n"
+        "• /status — Check connection and timezone\n"
+        "• /help — View the full help menu",
+        parse_mode="HTML",
+    )
 
 
 @dp.message(Command("status"))

@@ -331,7 +331,10 @@ async def test_cmd_start_fully_configured(mock_setcalendar: MagicMock) -> None:
 
     await cmd_start(message, state)
 
-    mock_setcalendar.assert_called_once_with(message, state)
+    mock_setcalendar.assert_not_called()
+    message.answer.assert_called_once()
+    args, _ = message.answer.call_args
+    assert "Welcome back to CalendarBot" in args[0]
 
 
 @pytest.mark.asyncio
