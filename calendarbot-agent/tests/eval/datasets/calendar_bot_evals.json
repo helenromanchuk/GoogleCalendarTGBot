@@ -1,0 +1,59 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "unauthenticated_user_gets_auth_url",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[telegram_id=99999, today=2026-06-22]\nMeeting with Bob tomorrow at 5pm"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "full_event_creation_english",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nTeam standup tomorrow at 10am"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "missing_time_triggers_question",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nDoctor appointment on Friday"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "missing_date_triggers_question",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nDentist at 3pm"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "russian_event_creation",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nВстреча с командой завтра в 14:00"
+          }
+        ]
+      }
+    }
+  ]
+}

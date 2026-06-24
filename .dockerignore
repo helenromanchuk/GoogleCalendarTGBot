@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+tests/
+data/
+calendar_bot.db
+venv/
+.venv/

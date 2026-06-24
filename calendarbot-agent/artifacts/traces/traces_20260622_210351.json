@@ -1,0 +1,1175 @@
+{
+  "eval_cases": [
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[telegram_id=99999, today=2026-06-22]\nMeeting with Bob tomorrow at 5pm"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "Please connect your Google account first by clicking this link: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=712577777618-kuh8613dk6eomepf3e9e64jruikuau7e.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fyour-cloud-run-url.a.run.app%2Foauth2callback&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.events+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly&state=IQzdcWwWjm6Qc_8pBToMUg_WVn8QjoXVm3gi3aerOKk&code_challenge=L9Zd5R9t7g25iBq5Ub3aALuDAFLwMQ4UacA_W26HW2w&code_challenge_method=S256&access_type=offline&include_granted_scopes=true&prompt=consent\n\nAfter connecting, send your message again."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "eval_case_id": "unauthenticated_user_gets_auth_url",
+      "agent_data": {
+        "agents": {
+          "calendarbot_agent": {
+            "agent_id": "calendarbot_agent",
+            "agent_type": "LlmAgent",
+            "description": "",
+            "instruction": "\nYou are CalendarBot, a friendly assistant that helps users add events to their Google Calendar.\nYou can understand messages written in English or Russian.\n\n## Your workflow\n\nEach user message will start with a metadata prefix like:\n  [telegram_id=12345, today=2026-06-22]\nExtract telegram_id and today's date from this prefix.\n\nFor EVERY user message, follow these steps in order:\n\n### Step 1 — Check authentication\nCall get_user_auth_status with the extracted telegram_id.\n- If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:\n  \"Please connect your Google account first by clicking this link: <url>\n  After connecting, send your message again.\"\n  Then STOP — do not process the event yet.\n- If authenticated but NO default calendar:\n  Call get_user_calendars, then list calendars to the user and ask them to pick one.\n  Call set_default_calendar with their choice.\n  Then ask them to send their event message again.\n  STOP after this.\n\n### Step 2 — Parse the event\nExtract from the user's message text (ignore the metadata prefix):\n- title: a short descriptive event title\n- date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.\n  E.g. \"tomorrow\" = today + 1 day, \"next Monday\" = next Monday's date.\n- time: start time in HH:MM 24-hour format\n\nIf the date is missing, ask: \"What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)\"\nIf the time is missing, ask: \"What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)\"\nWait for the user's reply before creating the event.\n\n### Step 3 — Create the event\nOnce you have title, date (YYYY-MM-DD), and time (HH:MM):\nCall create_calendar_event with telegram_id, title, date, and time.\n\nIf creation succeeds, reply: \"✅ Event created! View it here: <event_url>\"\nIf creation fails, explain the error clearly and suggest next steps.\n\n## Important rules\n- NEVER invent dates or times — always ask if missing\n- NEVER call create_calendar_event if date or time is missing\n- If the user says 'all day', use time='09:00'\n- Be concise and friendly; use emojis sparingly (✅ 📅)\n- Respond in the same language the user wrote in (English or Russian)\n",
+            "tools": [
+              {
+                "function_declarations": [
+                  {
+                    "description": "Check if a Telegram user has connected their Google account.\n\nArgs:\n    telegram_id: The Telegram user ID to check.\n\nReturns:\n    dict with 'authenticated' (bool), 'has_default_calendar' (bool),\n    and 'default_calendar_id' (str or None).",
+                    "name": "get_user_auth_status",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Generate a Google OAuth 2.0 authorization URL for the user.\n\nCall this when a user is not yet authenticated. The URL will redirect the\nuser to Google's consent screen. After approval, tokens are saved\nautomatically via the /oauth2callback endpoint.\n\nArgs:\n    telegram_id: The Telegram user ID to associate with the OAuth flow.\n\nReturns:\n    dict with 'auth_url' (the Google consent URL) and 'expires_in_seconds'.",
+                    "name": "get_google_auth_url",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "List the Google Calendars available to the authenticated user.\n\nArgs:\n    telegram_id: The Telegram user ID whose calendars to retrieve.\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'calendars' list of\n    {id, name} dicts, and optionally 'message' on error.",
+                    "name": "get_user_calendars",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Save the user's chosen default Google Calendar.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    calendar_id: The Google Calendar ID to set as default.\n\nReturns:\n    dict with 'status' ('success' or 'error') and optional 'message'.",
+                    "name": "set_default_calendar",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "calendar_id": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "calendar_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Create a Google Calendar event for the user.\n\nUses the user's stored credentials and default calendar. The event\nduration defaults to 60 minutes unless changed by the user.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    title: The event title or summary.\n    date: Event date in YYYY-MM-DD format.\n    time: Event start time in HH:MM format (24-hour).\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'event_url' on success,\n    and 'message' on error.",
+                    "name": "create_calendar_event",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "title": {
+                          "type": "STRING"
+                        },
+                        "date": {
+                          "type": "STRING"
+                        },
+                        "time": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "title",
+                        "date",
+                        "time",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "5tvu4n0g",
+                        "args": {
+                          "telegram_id": 99999
+                        },
+                        "name": "get_user_auth_status"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "5tvu4n0g",
+                        "name": "get_user_auth_status",
+                        "response": {
+                          "authenticated": false,
+                          "has_default_calendar": false,
+                          "default_calendar_id": null
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "0zgszvuu",
+                        "args": {
+                          "telegram_id": 99999
+                        },
+                        "name": "get_google_auth_url"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "0zgszvuu",
+                        "name": "get_google_auth_url",
+                        "response": {
+                          "auth_url": "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=712577777618-kuh8613dk6eomepf3e9e64jruikuau7e.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fyour-cloud-run-url.a.run.app%2Foauth2callback&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.events+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly&state=IQzdcWwWjm6Qc_8pBToMUg_WVn8QjoXVm3gi3aerOKk&code_challenge=L9Zd5R9t7g25iBq5Ub3aALuDAFLwMQ4UacA_W26HW2w&code_challenge_method=S256&access_type=offline&include_granted_scopes=true&prompt=consent",
+                          "expires_in_seconds": 600
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Please connect your Google account first by clicking this link: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=712577777618-kuh8613dk6eomepf3e9e64jruikuau7e.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fyour-cloud-run-url.a.run.app%2Foauth2callback&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.events+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.readonly&state=IQzdcWwWjm6Qc_8pBToMUg_WVn8QjoXVm3gi3aerOKk&code_challenge=L9Zd5R9t7g25iBq5Ub3aALuDAFLwMQ4UacA_W26HW2w&code_challenge_method=S256&access_type=offline&include_granted_scopes=true&prompt=consent\n\nAfter connecting, send your message again."
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nTeam standup tomorrow at 10am"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "✅ Event created! View it here: https://calendar.google.com/event?id=mock_event_12345"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "eval_case_id": "full_event_creation_english",
+      "agent_data": {
+        "agents": {
+          "calendarbot_agent": {
+            "agent_id": "calendarbot_agent",
+            "agent_type": "LlmAgent",
+            "description": "",
+            "instruction": "\nYou are CalendarBot, a friendly assistant that helps users add events to their Google Calendar.\nYou can understand messages written in English or Russian.\n\n## Your workflow\n\nEach user message will start with a metadata prefix like:\n  [telegram_id=12345, today=2026-06-22]\nExtract telegram_id and today's date from this prefix.\n\nFor EVERY user message, follow these steps in order:\n\n### Step 1 — Check authentication\nCall get_user_auth_status with the extracted telegram_id.\n- If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:\n  \"Please connect your Google account first by clicking this link: <url>\n  After connecting, send your message again.\"\n  Then STOP — do not process the event yet.\n- If authenticated but NO default calendar:\n  Call get_user_calendars, then list calendars to the user and ask them to pick one.\n  Call set_default_calendar with their choice.\n  Then ask them to send their event message again.\n  STOP after this.\n\n### Step 2 — Parse the event\nExtract from the user's message text (ignore the metadata prefix):\n- title: a short descriptive event title\n- date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.\n  E.g. \"tomorrow\" = today + 1 day, \"next Monday\" = next Monday's date.\n- time: start time in HH:MM 24-hour format\n\nIf the date is missing, ask: \"What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)\"\nIf the time is missing, ask: \"What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)\"\nWait for the user's reply before creating the event.\n\n### Step 3 — Create the event\nOnce you have title, date (YYYY-MM-DD), and time (HH:MM):\nCall create_calendar_event with telegram_id, title, date, and time.\n\nIf creation succeeds, reply: \"✅ Event created! View it here: <event_url>\"\nIf creation fails, explain the error clearly and suggest next steps.\n\n## Important rules\n- NEVER invent dates or times — always ask if missing\n- NEVER call create_calendar_event if date or time is missing\n- If the user says 'all day', use time='09:00'\n- Be concise and friendly; use emojis sparingly (✅ 📅)\n- Respond in the same language the user wrote in (English or Russian)\n",
+            "tools": [
+              {
+                "function_declarations": [
+                  {
+                    "description": "Check if a Telegram user has connected their Google account.\n\nArgs:\n    telegram_id: The Telegram user ID to check.\n\nReturns:\n    dict with 'authenticated' (bool), 'has_default_calendar' (bool),\n    and 'default_calendar_id' (str or None).",
+                    "name": "get_user_auth_status",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Generate a Google OAuth 2.0 authorization URL for the user.\n\nCall this when a user is not yet authenticated. The URL will redirect the\nuser to Google's consent screen. After approval, tokens are saved\nautomatically via the /oauth2callback endpoint.\n\nArgs:\n    telegram_id: The Telegram user ID to associate with the OAuth flow.\n\nReturns:\n    dict with 'auth_url' (the Google consent URL) and 'expires_in_seconds'.",
+                    "name": "get_google_auth_url",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "List the Google Calendars available to the authenticated user.\n\nArgs:\n    telegram_id: The Telegram user ID whose calendars to retrieve.\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'calendars' list of\n    {id, name} dicts, and optionally 'message' on error.",
+                    "name": "get_user_calendars",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Save the user's chosen default Google Calendar.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    calendar_id: The Google Calendar ID to set as default.\n\nReturns:\n    dict with 'status' ('success' or 'error') and optional 'message'.",
+                    "name": "set_default_calendar",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "calendar_id": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "calendar_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Create a Google Calendar event for the user.\n\nUses the user's stored credentials and default calendar. The event\nduration defaults to 60 minutes unless changed by the user.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    title: The event title or summary.\n    date: Event date in YYYY-MM-DD format.\n    time: Event start time in HH:MM format (24-hour).\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'event_url' on success,\n    and 'message' on error.",
+                    "name": "create_calendar_event",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "title": {
+                          "type": "STRING"
+                        },
+                        "date": {
+                          "type": "STRING"
+                        },
+                        "time": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "title",
+                        "date",
+                        "time",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "tu6ub752",
+                        "args": {
+                          "telegram_id": 12345
+                        },
+                        "name": "get_user_auth_status"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "tu6ub752",
+                        "name": "get_user_auth_status",
+                        "response": {
+                          "authenticated": true,
+                          "has_default_calendar": true,
+                          "default_calendar_id": "primary"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "l8f9nq4l",
+                        "args": {
+                          "date": "2026-06-23",
+                          "telegram_id": 12345,
+                          "title": "Team standup",
+                          "time": "10:00"
+                        },
+                        "name": "create_calendar_event"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "l8f9nq4l",
+                        "name": "create_calendar_event",
+                        "response": {
+                          "status": "success",
+                          "event_url": "https://calendar.google.com/event?id=mock_event_12345"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "✅ Event created! View it here: https://calendar.google.com/event?id=mock_event_12345"
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nDoctor appointment on Friday"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "eval_case_id": "missing_time_triggers_question",
+      "agent_data": {
+        "agents": {
+          "calendarbot_agent": {
+            "agent_id": "calendarbot_agent",
+            "agent_type": "LlmAgent",
+            "description": "",
+            "instruction": "\nYou are CalendarBot, a friendly assistant that helps users add events to their Google Calendar.\nYou can understand messages written in English or Russian.\n\n## Your workflow\n\nEach user message will start with a metadata prefix like:\n  [telegram_id=12345, today=2026-06-22]\nExtract telegram_id and today's date from this prefix.\n\nFor EVERY user message, follow these steps in order:\n\n### Step 1 — Check authentication\nCall get_user_auth_status with the extracted telegram_id.\n- If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:\n  \"Please connect your Google account first by clicking this link: <url>\n  After connecting, send your message again.\"\n  Then STOP — do not process the event yet.\n- If authenticated but NO default calendar:\n  Call get_user_calendars, then list calendars to the user and ask them to pick one.\n  Call set_default_calendar with their choice.\n  Then ask them to send their event message again.\n  STOP after this.\n\n### Step 2 — Parse the event\nExtract from the user's message text (ignore the metadata prefix):\n- title: a short descriptive event title\n- date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.\n  E.g. \"tomorrow\" = today + 1 day, \"next Monday\" = next Monday's date.\n- time: start time in HH:MM 24-hour format\n\nIf the date is missing, ask: \"What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)\"\nIf the time is missing, ask: \"What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)\"\nWait for the user's reply before creating the event.\n\n### Step 3 — Create the event\nOnce you have title, date (YYYY-MM-DD), and time (HH:MM):\nCall create_calendar_event with telegram_id, title, date, and time.\n\nIf creation succeeds, reply: \"✅ Event created! View it here: <event_url>\"\nIf creation fails, explain the error clearly and suggest next steps.\n\n## Important rules\n- NEVER invent dates or times — always ask if missing\n- NEVER call create_calendar_event if date or time is missing\n- If the user says 'all day', use time='09:00'\n- Be concise and friendly; use emojis sparingly (✅ 📅)\n- Respond in the same language the user wrote in (English or Russian)\n",
+            "tools": [
+              {
+                "function_declarations": [
+                  {
+                    "description": "Check if a Telegram user has connected their Google account.\n\nArgs:\n    telegram_id: The Telegram user ID to check.\n\nReturns:\n    dict with 'authenticated' (bool), 'has_default_calendar' (bool),\n    and 'default_calendar_id' (str or None).",
+                    "name": "get_user_auth_status",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Generate a Google OAuth 2.0 authorization URL for the user.\n\nCall this when a user is not yet authenticated. The URL will redirect the\nuser to Google's consent screen. After approval, tokens are saved\nautomatically via the /oauth2callback endpoint.\n\nArgs:\n    telegram_id: The Telegram user ID to associate with the OAuth flow.\n\nReturns:\n    dict with 'auth_url' (the Google consent URL) and 'expires_in_seconds'.",
+                    "name": "get_google_auth_url",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "List the Google Calendars available to the authenticated user.\n\nArgs:\n    telegram_id: The Telegram user ID whose calendars to retrieve.\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'calendars' list of\n    {id, name} dicts, and optionally 'message' on error.",
+                    "name": "get_user_calendars",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Save the user's chosen default Google Calendar.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    calendar_id: The Google Calendar ID to set as default.\n\nReturns:\n    dict with 'status' ('success' or 'error') and optional 'message'.",
+                    "name": "set_default_calendar",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "calendar_id": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "calendar_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Create a Google Calendar event for the user.\n\nUses the user's stored credentials and default calendar. The event\nduration defaults to 60 minutes unless changed by the user.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    title: The event title or summary.\n    date: Event date in YYYY-MM-DD format.\n    time: Event start time in HH:MM format (24-hour).\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'event_url' on success,\n    and 'message' on error.",
+                    "name": "create_calendar_event",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "title": {
+                          "type": "STRING"
+                        },
+                        "date": {
+                          "type": "STRING"
+                        },
+                        "time": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "title",
+                        "date",
+                        "time",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "gxi3trca",
+                        "args": {
+                          "telegram_id": 12345
+                        },
+                        "name": "get_user_auth_status"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "gxi3trca",
+                        "name": "get_user_auth_status",
+                        "response": {
+                          "authenticated": true,
+                          "has_default_calendar": true,
+                          "default_calendar_id": "primary"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)"
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nDentist at 3pm"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "eval_case_id": "missing_date_triggers_question",
+      "agent_data": {
+        "agents": {
+          "calendarbot_agent": {
+            "agent_id": "calendarbot_agent",
+            "agent_type": "LlmAgent",
+            "description": "",
+            "instruction": "\nYou are CalendarBot, a friendly assistant that helps users add events to their Google Calendar.\nYou can understand messages written in English or Russian.\n\n## Your workflow\n\nEach user message will start with a metadata prefix like:\n  [telegram_id=12345, today=2026-06-22]\nExtract telegram_id and today's date from this prefix.\n\nFor EVERY user message, follow these steps in order:\n\n### Step 1 — Check authentication\nCall get_user_auth_status with the extracted telegram_id.\n- If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:\n  \"Please connect your Google account first by clicking this link: <url>\n  After connecting, send your message again.\"\n  Then STOP — do not process the event yet.\n- If authenticated but NO default calendar:\n  Call get_user_calendars, then list calendars to the user and ask them to pick one.\n  Call set_default_calendar with their choice.\n  Then ask them to send their event message again.\n  STOP after this.\n\n### Step 2 — Parse the event\nExtract from the user's message text (ignore the metadata prefix):\n- title: a short descriptive event title\n- date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.\n  E.g. \"tomorrow\" = today + 1 day, \"next Monday\" = next Monday's date.\n- time: start time in HH:MM 24-hour format\n\nIf the date is missing, ask: \"What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)\"\nIf the time is missing, ask: \"What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)\"\nWait for the user's reply before creating the event.\n\n### Step 3 — Create the event\nOnce you have title, date (YYYY-MM-DD), and time (HH:MM):\nCall create_calendar_event with telegram_id, title, date, and time.\n\nIf creation succeeds, reply: \"✅ Event created! View it here: <event_url>\"\nIf creation fails, explain the error clearly and suggest next steps.\n\n## Important rules\n- NEVER invent dates or times — always ask if missing\n- NEVER call create_calendar_event if date or time is missing\n- If the user says 'all day', use time='09:00'\n- Be concise and friendly; use emojis sparingly (✅ 📅)\n- Respond in the same language the user wrote in (English or Russian)\n",
+            "tools": [
+              {
+                "function_declarations": [
+                  {
+                    "description": "Check if a Telegram user has connected their Google account.\n\nArgs:\n    telegram_id: The Telegram user ID to check.\n\nReturns:\n    dict with 'authenticated' (bool), 'has_default_calendar' (bool),\n    and 'default_calendar_id' (str or None).",
+                    "name": "get_user_auth_status",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Generate a Google OAuth 2.0 authorization URL for the user.\n\nCall this when a user is not yet authenticated. The URL will redirect the\nuser to Google's consent screen. After approval, tokens are saved\nautomatically via the /oauth2callback endpoint.\n\nArgs:\n    telegram_id: The Telegram user ID to associate with the OAuth flow.\n\nReturns:\n    dict with 'auth_url' (the Google consent URL) and 'expires_in_seconds'.",
+                    "name": "get_google_auth_url",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "List the Google Calendars available to the authenticated user.\n\nArgs:\n    telegram_id: The Telegram user ID whose calendars to retrieve.\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'calendars' list of\n    {id, name} dicts, and optionally 'message' on error.",
+                    "name": "get_user_calendars",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Save the user's chosen default Google Calendar.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    calendar_id: The Google Calendar ID to set as default.\n\nReturns:\n    dict with 'status' ('success' or 'error') and optional 'message'.",
+                    "name": "set_default_calendar",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "calendar_id": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "calendar_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Create a Google Calendar event for the user.\n\nUses the user's stored credentials and default calendar. The event\nduration defaults to 60 minutes unless changed by the user.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    title: The event title or summary.\n    date: Event date in YYYY-MM-DD format.\n    time: Event start time in HH:MM format (24-hour).\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'event_url' on success,\n    and 'message' on error.",
+                    "name": "create_calendar_event",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "title": {
+                          "type": "STRING"
+                        },
+                        "date": {
+                          "type": "STRING"
+                        },
+                        "time": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "title",
+                        "date",
+                        "time",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "zrvxryr8",
+                        "args": {
+                          "telegram_id": 12345
+                        },
+                        "name": "get_user_auth_status"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "zrvxryr8",
+                        "name": "get_user_auth_status",
+                        "response": {
+                          "authenticated": true,
+                          "has_default_calendar": true,
+                          "default_calendar_id": "primary"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)"
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[telegram_id=12345, today=2026-06-22]\nВстреча с командой завтра в 14:00"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "✅ Событие создано! Вы можете посмотреть его здесь: https://calendar.google.com/event?id=mock_event_12345"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "eval_case_id": "russian_event_creation",
+      "agent_data": {
+        "agents": {
+          "calendarbot_agent": {
+            "agent_id": "calendarbot_agent",
+            "agent_type": "LlmAgent",
+            "description": "",
+            "instruction": "\nYou are CalendarBot, a friendly assistant that helps users add events to their Google Calendar.\nYou can understand messages written in English or Russian.\n\n## Your workflow\n\nEach user message will start with a metadata prefix like:\n  [telegram_id=12345, today=2026-06-22]\nExtract telegram_id and today's date from this prefix.\n\nFor EVERY user message, follow these steps in order:\n\n### Step 1 — Check authentication\nCall get_user_auth_status with the extracted telegram_id.\n- If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:\n  \"Please connect your Google account first by clicking this link: <url>\n  After connecting, send your message again.\"\n  Then STOP — do not process the event yet.\n- If authenticated but NO default calendar:\n  Call get_user_calendars, then list calendars to the user and ask them to pick one.\n  Call set_default_calendar with their choice.\n  Then ask them to send their event message again.\n  STOP after this.\n\n### Step 2 — Parse the event\nExtract from the user's message text (ignore the metadata prefix):\n- title: a short descriptive event title\n- date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.\n  E.g. \"tomorrow\" = today + 1 day, \"next Monday\" = next Monday's date.\n- time: start time in HH:MM 24-hour format\n\nIf the date is missing, ask: \"What date should I schedule this for? (e.g. 'today', 'tomorrow', or a specific date)\"\nIf the time is missing, ask: \"What time should this be? (e.g. '3pm', '15:00', or 'all day' — I'll use 09:00)\"\nWait for the user's reply before creating the event.\n\n### Step 3 — Create the event\nOnce you have title, date (YYYY-MM-DD), and time (HH:MM):\nCall create_calendar_event with telegram_id, title, date, and time.\n\nIf creation succeeds, reply: \"✅ Event created! View it here: <event_url>\"\nIf creation fails, explain the error clearly and suggest next steps.\n\n## Important rules\n- NEVER invent dates or times — always ask if missing\n- NEVER call create_calendar_event if date or time is missing\n- If the user says 'all day', use time='09:00'\n- Be concise and friendly; use emojis sparingly (✅ 📅)\n- Respond in the same language the user wrote in (English or Russian)\n",
+            "tools": [
+              {
+                "function_declarations": [
+                  {
+                    "description": "Check if a Telegram user has connected their Google account.\n\nArgs:\n    telegram_id: The Telegram user ID to check.\n\nReturns:\n    dict with 'authenticated' (bool), 'has_default_calendar' (bool),\n    and 'default_calendar_id' (str or None).",
+                    "name": "get_user_auth_status",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Generate a Google OAuth 2.0 authorization URL for the user.\n\nCall this when a user is not yet authenticated. The URL will redirect the\nuser to Google's consent screen. After approval, tokens are saved\nautomatically via the /oauth2callback endpoint.\n\nArgs:\n    telegram_id: The Telegram user ID to associate with the OAuth flow.\n\nReturns:\n    dict with 'auth_url' (the Google consent URL) and 'expires_in_seconds'.",
+                    "name": "get_google_auth_url",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "List the Google Calendars available to the authenticated user.\n\nArgs:\n    telegram_id: The Telegram user ID whose calendars to retrieve.\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'calendars' list of\n    {id, name} dicts, and optionally 'message' on error.",
+                    "name": "get_user_calendars",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Save the user's chosen default Google Calendar.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    calendar_id: The Google Calendar ID to set as default.\n\nReturns:\n    dict with 'status' ('success' or 'error') and optional 'message'.",
+                    "name": "set_default_calendar",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "calendar_id": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "calendar_id",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              },
+              {
+                "function_declarations": [
+                  {
+                    "description": "Create a Google Calendar event for the user.\n\nUses the user's stored credentials and default calendar. The event\nduration defaults to 60 minutes unless changed by the user.\n\nArgs:\n    telegram_id: The Telegram user ID.\n    title: The event title or summary.\n    date: Event date in YYYY-MM-DD format.\n    time: Event start time in HH:MM format (24-hour).\n\nReturns:\n    dict with 'status' ('success' or 'error'), 'event_url' on success,\n    and 'message' on error.",
+                    "name": "create_calendar_event",
+                    "parameters": {
+                      "properties": {
+                        "telegram_id": {
+                          "type": "INTEGER"
+                        },
+                        "title": {
+                          "type": "STRING"
+                        },
+                        "date": {
+                          "type": "STRING"
+                        },
+                        "time": {
+                          "type": "STRING"
+                        },
+                        "tool_context": {}
+                      },
+                      "required": [
+                        "telegram_id",
+                        "title",
+                        "date",
+                        "time",
+                        "tool_context"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "70r2o9xn",
+                        "args": {
+                          "telegram_id": 12345
+                        },
+                        "name": "get_user_auth_status"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "70r2o9xn",
+                        "name": "get_user_auth_status",
+                        "response": {
+                          "authenticated": true,
+                          "has_default_calendar": true,
+                          "default_calendar_id": "primary"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "vemnpptd",
+                        "args": {
+                          "time": "14:00",
+                          "title": "Встреча с командой",
+                          "date": "2026-06-23",
+                          "telegram_id": 12345
+                        },
+                        "name": "create_calendar_event"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "function_response": {
+                        "id": "vemnpptd",
+                        "name": "create_calendar_event",
+                        "response": {
+                          "status": "success",
+                          "event_url": "https://calendar.google.com/event?id=mock_event_12345"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "user"
+                }
+              },
+              {
+                "author": "calendarbot_agent",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "✅ Событие создано! Вы можете посмотреть его здесь: https://calendar.google.com/event?id=mock_event_12345"
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
