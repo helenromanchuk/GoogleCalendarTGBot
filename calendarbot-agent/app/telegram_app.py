@@ -19,7 +19,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
 from google.genai import types as genai_types
 
 from app.agent import app as adk_app
@@ -49,7 +49,20 @@ dp = Dispatcher(storage=storage)
 
 # ── ADK Runner setup ──────────────────────────────────────────────────────────
 
-session_service = InMemorySessionService()
+def _to_async_db_url(url: str) -> str:
+    if "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    base = scheme.split("+")[0]
+    driver_map = {
+        "sqlite": "sqlite+aiosqlite",
+        "postgresql": "postgresql+asyncpg",
+        "postgres": "postgresql+asyncpg",
+    }
+    new_scheme = driver_map.get(base, scheme)
+    return f"{new_scheme}://{rest}"
+
+session_service = DatabaseSessionService(_to_async_db_url(settings.database_url))
 runner = Runner(app=adk_app, session_service=session_service)
 
 APP_NAME = adk_app.name
@@ -885,9 +898,13 @@ async def callback_conflict_add_anyway(
     """Handle clicking 'Add anyway' button when there is a scheduling conflict."""
     telegram_id = callback.from_user.id
 
-    from app.tools import _pending_events, create_calendar_event
+    from app.tools import create_calendar_event
+    from app.database import session_scope, get_pending_event, set_pending_event
 
-    pending = _pending_events.pop(telegram_id, None)
+    with session_scope() as db:
+        pending = get_pending_event(db, telegram_id)
+        if pending:
+            set_pending_event(db, telegram_id, None, commit=True)
     if not pending:
         await callback.answer("Error: no pending event found.")
         return
@@ -948,9 +965,10 @@ async def callback_conflict_another(
     """Handle clicking 'Choose another time' button when there is a scheduling conflict."""
     telegram_id = callback.from_user.id
 
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event
 
-    _pending_events.pop(telegram_id, None)
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, None, commit=True)
 
     is_russian = "Все равно добавить" in (callback.message.text or "") or "это событие пересекается" in (callback.message.text or "")
 

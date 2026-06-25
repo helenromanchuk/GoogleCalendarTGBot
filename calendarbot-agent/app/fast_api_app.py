@@ -62,6 +62,8 @@ async def lifespan(app: FastAPI):
     # Startup — lazily import Telegram to avoid connection errors during ADK run/playground
     logging.basicConfig(level=logging.INFO)
     init_db()
+    from app.database import migrate_db
+    migrate_db()
 
     try:
         from app.telegram_app import bot, dp  # noqa: F401

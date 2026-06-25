@@ -44,7 +44,10 @@ Ask the user: Option A (simple single-project) or Option B (full CI/CD pipeline 
 | `agents-cli eval optimize` | Auto-tune agent prompts using eval data |
 | `agents-cli lint` | Check code quality |
 | `agents-cli infra single-project` | Set up project infrastructure (Terraform) |
-| `agents-cli deploy` | Deploy to dev |
+| `agents-cli deploy`     | Deploy to Cloud Run       |
+
+### Local Testing Flag
+The `TESTING` environment variable defaults to `false` in production to prevent unintended mock responses. To test the bot locally with mock data (specifically for telegram_id 12345), you must explicitly set `TESTING=true` in your `.env` file.
 | `agents-cli scaffold enhance` | Add deployment target or CI/CD to project |
 | `agents-cli scaffold upgrade` | Upgrade project to latest version |
 
