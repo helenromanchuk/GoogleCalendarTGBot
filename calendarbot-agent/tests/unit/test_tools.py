@@ -107,7 +107,7 @@ def test_create_calendar_event(mock_build_service: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
-    from app.tools import _pending_events
+    from app.database import set_pending_event, get_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -141,7 +141,9 @@ def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
     db.close()
 
     # Clear pending events before calling
-    _pending_events.pop(77778, None)
+    db = SessionLocal()
+    set_pending_event(db, 77778, None, commit=True)
+    db.close()
 
     # Call tool function (should fail check due to conflict)
     res = create_calendar_event(
@@ -159,13 +161,16 @@ def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
     assert "'Existing Busy Event'" in res["message"]
 
     # Verify event was cached in pending
-    assert 77778 in _pending_events
-    assert _pending_events[77778]["title"] == "Test Overlapping Event"
+    db = SessionLocal()
+    pending = get_pending_event(db, 77778)
+    assert pending is not None
+    assert pending["title"] == "Test Overlapping Event"
+    db.close()
 
 
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict_bypass(mock_build_service: MagicMock) -> None:
-    from app.tools import _pending_events
+    from app.database import set_pending_event, get_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -203,7 +208,9 @@ def test_create_calendar_event_conflict_bypass(mock_build_service: MagicMock) ->
     db.close()
 
     # Clear pending events before calling
-    _pending_events.pop(77779, None)
+    db = SessionLocal()
+    set_pending_event(db, 77779, None, commit=True)
+    db.close()
 
     # Call tool function with bypass_conflict_check=True
     res = create_calendar_event(
@@ -221,7 +228,9 @@ def test_create_calendar_event_conflict_bypass(mock_build_service: MagicMock) ->
     assert res["event_url"] == "https://event-link"
 
     # Verify event was NOT cached
-    assert 77779 not in _pending_events
+    db = SessionLocal()
+    assert get_pending_event(db, 77779) is None
+    db.close()
 
 
 @patch("app.tools._build_calendar_service")

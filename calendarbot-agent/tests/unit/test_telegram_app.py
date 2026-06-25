@@ -525,16 +525,17 @@ async def test_send_formatted_response_conflict_russian() -> None:
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock) -> None:
     from app.telegram_app import callback_conflict_add_anyway
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999123
-    _pending_events[telegram_id] = {
-        "title": "Conflicting Party",
-        "date": "2026-06-25",
-        "time": "18:00",
-        "location": "Lobby",
-        "description": "Party description",
-    }
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, {
+            "title": "Conflicting Party",
+            "date": "2026-06-25",
+            "time": "18:00",
+            "location": "Lobby",
+            "description": "Party description",
+        }, commit=True)
 
     callback = AsyncMock()
     callback.from_user.id = telegram_id
@@ -567,23 +568,25 @@ async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock)
     assert "Conflicting Party" in args[0]
     assert "https://calendar.google.com/event?id=123" in args[0]
     callback.answer.assert_called_once()
-    assert telegram_id not in _pending_events
+    with session_scope() as db:
+        assert get_pending_event(db, telegram_id) is None
 
 
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: MagicMock) -> None:
     from app.telegram_app import callback_conflict_add_anyway
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999124
-    _pending_events[telegram_id] = {
-        "title": "Встреча",
-        "date": "2026-06-25",
-        "time": "18:00",
-        "location": None,
-        "description": None,
-    }
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, {
+            "title": "Встреча",
+            "date": "2026-06-25",
+            "time": "18:00",
+            "location": None,
+            "description": None,
+        }, commit=True)
 
     callback = AsyncMock()
     callback.from_user.id = telegram_id
@@ -604,16 +607,18 @@ async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: Ma
     assert "✅ Событие создано!" in args[0]
     assert "Встреча" in args[0]
     callback.answer.assert_called_once()
-    assert telegram_id not in _pending_events
+    with session_scope() as db:
+        assert get_pending_event(db, telegram_id) is None
 
 
 @pytest.mark.asyncio
 async def test_callback_conflict_add_anyway_no_pending() -> None:
     from app.telegram_app import callback_conflict_add_anyway
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event
 
     telegram_id = 999125
-    _pending_events.pop(telegram_id, None)
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, None, commit=True)
 
     callback = AsyncMock()
     callback.from_user.id = telegram_id
@@ -627,10 +632,11 @@ async def test_callback_conflict_add_anyway_no_pending() -> None:
 @pytest.mark.asyncio
 async def test_callback_conflict_another_english() -> None:
     from app.telegram_app import callback_conflict_another
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999126
-    _pending_events[telegram_id] = {"title": "Busy Event"}
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, {"title": "Busy Event"}, commit=True)
 
     callback = AsyncMock()
     callback.from_user.id = telegram_id
@@ -644,16 +650,18 @@ async def test_callback_conflict_another_english() -> None:
         "Please type another start time for the event (e.g. 'at 5pm', '17:30', or 'all day')."
     )
     callback.answer.assert_called_once()
-    assert telegram_id not in _pending_events
+    with session_scope() as db:
+        assert get_pending_event(db, telegram_id) is None
 
 
 @pytest.mark.asyncio
 async def test_callback_conflict_another_russian() -> None:
     from app.telegram_app import callback_conflict_another
-    from app.tools import _pending_events
+    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999127
-    _pending_events[telegram_id] = {"title": "Busy Event"}
+    with session_scope() as db:
+        set_pending_event(db, telegram_id, {"title": "Busy Event"}, commit=True)
 
     callback = AsyncMock()
     callback.from_user.id = telegram_id
@@ -667,7 +675,8 @@ async def test_callback_conflict_another_russian() -> None:
         "Пожалуйста, введите другое время начала события (например: 'в 15:00', '17:30' или 'весь день')."
     )
     callback.answer.assert_called_once()
-    assert telegram_id not in _pending_events
+    with session_scope() as db:
+        assert get_pending_event(db, telegram_id) is None
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,7 @@ def configure_test_environment():
     os.environ["DATABASE_URL"] = "sqlite:///:memory:"
     os.environ["BASE_URL"] = "http://testserver"
     os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
+    os.environ["TESTING"] = "true"
 
 # ---------------------------------------------------------------------------
 # Mocking utilities

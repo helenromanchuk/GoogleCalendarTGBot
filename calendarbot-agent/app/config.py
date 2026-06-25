@@ -49,7 +49,11 @@ class Settings:
     )
 
     # Enable mock behavior for user ID 12345 (used in integration/unit testing)
-    testing: bool = os.environ.get("TESTING", "true").lower() in ("true", "1", "yes")
+    @property
+    def testing(self) -> bool:
+        if os.environ.get("K_SERVICE"):
+            return False
+        return os.environ.get("TESTING", "false").lower() in ("true", "1", "yes")
 
     # Google Calendar OAuth scopes
     google_scopes: tuple[str, ...] = (

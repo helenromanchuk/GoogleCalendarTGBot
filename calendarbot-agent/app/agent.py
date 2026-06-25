@@ -33,6 +33,7 @@ from app.tools import (
     get_user_auth_status,
     get_user_calendars,
     set_default_calendar,
+    get_upcoming_events,
 )
 
 # Use GOOGLE_API_KEY (AI Studio) for dev. For production set GOOGLE_GENAI_USE_VERTEXAI=True.
@@ -67,7 +68,10 @@ Call get_user_auth_status with the extracted telegram_id.
   Then ask them to send their event message again.
   STOP after this.
 
-### Step 2 — Parse the event
+### Step 2 — List upcoming events
+If the user asks for their upcoming schedule or events, call get_upcoming_events with the telegram_id and return a nicely formatted list. STOP after this.
+
+### Step 3 — Parse the event
 Extract from the user's message text (ignore the metadata prefix):
 - title: a short descriptive event title (name)
 - date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.
@@ -112,6 +116,7 @@ root_agent = Agent(
         get_user_calendars,
         set_default_calendar,
         create_calendar_event,
+        get_upcoming_events,
     ],
 )
 

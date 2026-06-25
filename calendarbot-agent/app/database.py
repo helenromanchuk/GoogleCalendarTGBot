@@ -67,6 +67,7 @@ class User(Base):
     )  # JSON string, Fernet-encrypted
     default_calendar_id = Column(String, nullable=True)
     default_duration_minutes = Column(Integer, default=60)
+    pending_event_data = Column(EncryptedText, nullable=True)  # JSON string, Fernet-encrypted
 
 
 class CalendarDuration(Base):
@@ -86,6 +87,24 @@ class CalendarDuration(Base):
 def init_db() -> None:
     """Create all tables (idempotent)."""
     Base.metadata.create_all(bind=engine)
+
+
+def migrate_db() -> None:
+    """Apply additive schema changes that create_all() cannot handle."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        if settings.database_url.startswith("sqlite"):
+            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        else:
+            existing = {
+                row[0] for row in conn.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
+                )
+            }
+        
+        if "pending_event_data" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN pending_event_data TEXT"))
+            conn.commit()
 
 
 # Database tables are initialized explicitly in FastAPI lifespan or in test setup.
@@ -176,3 +195,30 @@ def set_calendar_duration(
     else:
         pref.duration_minutes = minutes
     db.commit()
+
+
+def get_pending_event(db: Session, telegram_id: int) -> dict | None:
+    """Get pending event data for a user."""
+    import json
+    user = get_user(db, telegram_id)
+    if user and user.pending_event_data:
+        try:
+            return json.loads(user.pending_event_data)
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def set_pending_event(
+    db: Session, telegram_id: int, data: dict | None, *, commit: bool = False
+) -> None:
+    """Set or clear pending event data for a user."""
+    import json
+    user = get_or_create_user(db, telegram_id)
+    if data is None:
+        user.pending_event_data = None
+    else:
+        user.pending_event_data = json.dumps(data)
+    
+    if commit:
+        db.commit()

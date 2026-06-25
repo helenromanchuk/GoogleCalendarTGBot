@@ -36,9 +36,6 @@ _MAX_USER_LOCKS = 1024
 _user_locks: dict[int, threading.Lock] = {}
 _user_locks_lock = threading.Lock()
 
-# Pending events cache for handling conflicts
-_pending_events: dict[int, dict] = {}
-
 
 def get_user_lock(telegram_id: int) -> threading.Lock:
     """Get or create a thread-safe lock for the given Telegram user ID."""
@@ -336,13 +333,14 @@ def create_calendar_event(
 
                         if actual_conflicts:
                             # Save pending event details
-                            _pending_events[telegram_id] = {
+                            from app.database import set_pending_event
+                            set_pending_event(db, telegram_id, {
                                 "title": title,
                                 "date": date,
                                 "time": time,
                                 "location": location,
                                 "description": description,
-                            }
+                            }, commit=True)
                             conflict_names = ", ".join([f"'{e.get('summary', 'Untitled')}'" for e in actual_conflicts])
                             return {
                                 "status": "conflict",
@@ -393,21 +391,22 @@ def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
         dict with status, events list (each with summary, start, end, htmlLink, location), and message.
     """
     if settings.testing and telegram_id == 12345:
-        # Return mock events for testing
+        _tomorrow = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%d")
+        _day_after = (datetime.now(UTC) + timedelta(days=2)).strftime("%Y-%m-%d")
         return {
             "status": "success",
             "events": [
                 {
                     "summary": "Mock Event 1",
-                    "start": {"dateTime": "2026-06-24T10:00:00Z"},
-                    "end": {"dateTime": "2026-06-24T11:00:00Z"},
+                    "start": {"dateTime": f"{_tomorrow}T10:00:00Z"},
+                    "end": {"dateTime": f"{_tomorrow}T11:00:00Z"},
                     "htmlLink": "https://calendar.google.com/event1",
                     "location": "Virtual",
                 },
                 {
                     "summary": "Mock Event 2",
-                    "start": {"date": "2026-06-25"},
-                    "end": {"date": "2026-06-26"},
+                    "start": {"date": _day_after},
+                    "end": {"date": (datetime.now(UTC) + timedelta(days=3)).strftime("%Y-%m-%d")},
                     "htmlLink": "https://calendar.google.com/event2",
                     "location": None,
                 },
