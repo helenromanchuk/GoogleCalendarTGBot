@@ -5,3 +5,11 @@ __pycache__/
 1.1.0
 fix_plan.md
 
+# Local server logs (dev runs from repo root)
+server*.log
+
+# Security-review writeups — never commit
+writeup.md
+WRITEUP.md
+AIwriteup.md
+
