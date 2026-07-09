@@ -171,6 +171,28 @@ def test_migrate_db_noop_when_column_already_exists() -> None:
     migrate_db()
 
 
+def test_postgres_drivers_available() -> None:
+    """Both Postgres drivers must be installed: psycopg2 for the sync engine
+    (database.py builds it straight from DATABASE_URL) and asyncpg for the
+    async engine (telegram_app._to_async_db_url maps postgresql → asyncpg for
+    ADK's DatabaseSessionService). Engine construction imports the DBAPI, so
+    this fails if either driver is missing from the dependencies — no live
+    Postgres server is needed.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.telegram_app import _to_async_db_url
+
+    pg_url = "postgresql://user:pass@localhost:5432/calendarbot"
+
+    sync_engine = create_engine(pg_url)
+    assert sync_engine.dialect.driver == "psycopg2"
+    sync_engine.dispose()
+
+    async_engine = create_async_engine(_to_async_db_url(pg_url))
+    assert async_engine.dialect.driver == "asyncpg"
+
+
 def test_migrate_db_adds_missing_column(tmp_path, monkeypatch) -> None:
     """On a legacy schema missing pending_event_data, migrate_db must add it."""
     import app.database as database_module
