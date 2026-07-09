@@ -117,7 +117,14 @@ async def _run_agent(telegram_id: int, user_message: str) -> str:
     """Send a message to the ADK agent and return its text response."""
     import asyncio
 
+    from app.rate_limit import agent_run_limiter
+
     AGENT_TIMEOUT_SECONDS = 30
+
+    # Every Gemini call funnels through here, so this caps per-user LLM cost.
+    if not agent_run_limiter.allow(str(telegram_id)):
+        logger.warning("Agent rate limit exceeded for user %d", telegram_id)
+        return "⏳ Too many requests. Please wait a minute and try again."
 
     session_id = f"tg_{telegram_id}"
     try:

@@ -32,8 +32,22 @@ from google.adk.cli.fast_api import get_fast_api_app
 
 from app.config import settings
 from app.database import get_or_create_user, init_db, session_scope
+from app.rate_limit import feedback_limiter, oauth_callback_limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate limiting.
+
+    On Cloud Run the Google front end appends the real client IP as the last
+    X-Forwarded-For entry (earlier entries are client-supplied and spoofable),
+    so take the last one. Locally there is no XFF and we use the socket peer.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
 
 # ── ADK FastAPI sub-application ───────────────────────────────────────────────
 
@@ -121,6 +135,9 @@ async def telegram_webhook(request: Request):
 @app.get("/oauth2callback")
 async def oauth2callback(request: Request):
     """Handle Google OAuth 2.0 redirect and store tokens for the user."""
+    if not oauth_callback_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     error = request.query_params.get("error")
@@ -216,6 +233,9 @@ async def health():
 @app.post("/feedback")
 async def feedback(request: Request):
     """Collect and log user feedback."""
+    if not feedback_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+
     data = await request.json()
     logger.info("Received user feedback: %s", data)
     return {"status": "ok"}
