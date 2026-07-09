@@ -27,6 +27,22 @@ def test_verify_invalid_oauth_state() -> None:
     assert payload is None
 
 
+def test_oauth_state_rejects_tokens_encrypted_with_db_key() -> None:
+    """Domain separation: a Fernet token minted with the raw ENCRYPTION_KEY
+    (the key protecting credentials at rest in database.py) must NOT verify
+    as an OAuth state token — the state key is derived via HKDF and is
+    cryptographically independent of the DB key."""
+    import json
+
+    from app.database import fernet as db_fernet
+
+    forged = db_fernet.encrypt(
+        json.dumps({"telegram_id": 1, "code_verifier": "attacker"}).encode("utf-8")
+    ).decode("utf-8")
+
+    assert verify_oauth_state(forged) is None
+
+
 def test_verify_expired_oauth_state() -> None:
     telegram_id = 112233
     code_verifier = "verifier"
