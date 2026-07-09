@@ -117,7 +117,14 @@ async def _run_agent(telegram_id: int, user_message: str) -> str:
     """Send a message to the ADK agent and return its text response."""
     import asyncio
 
+    from app.rate_limit import agent_run_limiter
+
     AGENT_TIMEOUT_SECONDS = 30
+
+    # Every Gemini call funnels through here, so this caps per-user LLM cost.
+    if not agent_run_limiter.allow(str(telegram_id)):
+        logger.warning("Agent rate limit exceeded for user %d", telegram_id)
+        return "⏳ Too many requests. Please wait a minute and try again."
 
     session_id = f"tg_{telegram_id}"
     try:
@@ -912,6 +919,8 @@ async def callback_conflict_add_anyway(
     await callback.message.edit_reply_markup(reply_markup=None)
     await bot.send_chat_action(callback.message.chat.id, "typing")
 
+    is_all_day = pending.get("all_day", False)
+
     try:
         res = create_calendar_event(
             telegram_id=telegram_id,
@@ -922,14 +931,20 @@ async def callback_conflict_add_anyway(
             location=pending["location"],
             description=pending["description"],
             bypass_conflict_check=True,
+            all_day=is_all_day,
         )
 
         if res.get("status") == "success":
             event_url = res.get("event_url", "")
-            date_obj = datetime.fromisoformat(f"{pending['date']}T{pending['time']}:00")
-            formatted_date_time = date_obj.strftime("%d.%m.%Y, %H:%M")
-
             is_russian = "Все равно добавить" in (callback.message.text or "") or "это событие пересекается" in (callback.message.text or "")
+
+            if is_all_day:
+                date_obj = datetime.fromisoformat(pending["date"])
+                day_label = "Весь день" if is_russian else "All day"
+                formatted_date_time = f"{date_obj.strftime('%d.%m.%Y')} ({day_label})"
+            else:
+                date_obj = datetime.fromisoformat(f"{pending['date']}T{pending['time']}:00")
+                formatted_date_time = date_obj.strftime("%d.%m.%Y, %H:%M")
 
             if is_russian:
                 success_text = (

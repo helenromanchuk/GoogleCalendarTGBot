@@ -25,6 +25,15 @@ def configure_test_environment():
     os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
     os.environ["TESTING"] = "true"
 
+# Reset shared rate-limiter state before each test so multiple tests hitting
+# the same endpoints/users don't cumulatively trip the limits.
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    from app.rate_limit import reset_all
+
+    reset_all()
+
+
 # ---------------------------------------------------------------------------
 # Mocking utilities
 # ---------------------------------------------------------------------------

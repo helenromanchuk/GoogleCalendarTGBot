@@ -1,16 +1,32 @@
 """Global async Redis client and stateless OAuth CSRF state verification."""
 
+import base64
 import json
 import logging
 
 import redis.asyncio as redis
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-fernet = Fernet(settings.encryption_key.encode("utf-8"))
+# Domain separation: OAuth state tokens travel through browser URLs, while the
+# raw ENCRYPTION_KEY also protects credentials at rest (database.py). Derive a
+# dedicated state-token key via HKDF so compromising one domain never exposes
+# the other, and so a Fernet token minted for one purpose is not valid
+# ciphertext for the other.
+_state_key = base64.urlsafe_b64encode(
+    HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"calendarbot-oauth-state",
+    ).derive(settings.encryption_key.encode("utf-8"))
+)
+fernet = Fernet(_state_key)
 
 
 # ── Stateless OAuth State Helpers ─────────────────────────────────────────────

@@ -23,6 +23,7 @@ Mounts:
 import html
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -31,8 +32,22 @@ from google.adk.cli.fast_api import get_fast_api_app
 
 from app.config import settings
 from app.database import get_or_create_user, init_db, session_scope
+from app.rate_limit import feedback_limiter, oauth_callback_limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate limiting.
+
+    On Cloud Run the Google front end appends the real client IP as the last
+    X-Forwarded-For entry (earlier entries are client-supplied and spoofable),
+    so take the last one. Locally there is no XFF and we use the socket peer.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
 
 # ── ADK FastAPI sub-application ───────────────────────────────────────────────
 
@@ -108,7 +123,7 @@ async def telegram_webhook(request: Request):
     from app.telegram_app import bot, dp
 
     secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_token != settings.webhook_secret:
+    if not secrets.compare_digest(secret_token or "", settings.webhook_secret):
         raise HTTPException(status_code=401, detail="Unauthorized webhook call")
 
     update_data = await request.json()
@@ -120,6 +135,9 @@ async def telegram_webhook(request: Request):
 @app.get("/oauth2callback")
 async def oauth2callback(request: Request):
     """Handle Google OAuth 2.0 redirect and store tokens for the user."""
+    if not oauth_callback_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     error = request.query_params.get("error")
@@ -196,8 +214,11 @@ async def oauth2callback(request: Request):
 
     except Exception as exc:
         logger.exception("OAuth callback error for user %d: %s", telegram_id, exc)
+        # Deliberately generic: exception text can contain internal details
+        # (library errors, endpoints, token fragments) and must not reach the browser.
         return HTMLResponse(
-            f"<h1>An error occurred</h1><p>{html.escape(str(exc))}</p>"
+            "<h1>An error occurred</h1>"
+            "<p>Something went wrong while connecting your Google account.</p>"
             "<p>Please try again from Telegram.</p>",
             status_code=500,
         )
@@ -212,6 +233,9 @@ async def health():
 @app.post("/feedback")
 async def feedback(request: Request):
     """Collect and log user feedback."""
+    if not feedback_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+
     data = await request.json()
     logger.info("Received user feedback: %s", data)
     return {"status": "ok"}

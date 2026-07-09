@@ -201,8 +201,13 @@ def get_user_calendars(telegram_id: int, tool_context: Any) -> dict:
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
                 "calendars": [],
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc), "calendars": []}
+        except Exception:
+            logger.exception("Error listing calendars for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while retrieving your calendars. Please try again later.",
+                "calendars": [],
+            }
 
 
 def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) -> dict:
@@ -223,20 +228,25 @@ def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) 
             user.default_calendar_id = calendar_id
             db.commit()
             return {"status": "success"}
-        except Exception as exc:
+        except Exception:
             db.rollback()
-            return {"status": "error", "message": str(exc)}
+            logger.exception("Error setting default calendar for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while saving your calendar choice. Please try again later.",
+            }
 
 
 def create_calendar_event(
     telegram_id: int,
     title: str,
     date: str,
-    time: str,
+    time: str | None,
     tool_context: Any,
     location: str | None = None,
     description: str | None = None,
     bypass_conflict_check: bool = False,
+    all_day: bool = False,
 ) -> dict:
     """Create a Google Calendar event for the user.
 
@@ -247,10 +257,13 @@ def create_calendar_event(
         telegram_id: The Telegram user ID.
         title: The event title or summary.
         date: Event date in YYYY-MM-DD format.
-        time: Event start time in HH:MM format (24-hour).
+        time: Event start time in HH:MM format (24-hour). Ignored (may be
+            None) when all_day is True.
         location: Optional location/place of the event.
         description: Optional description/details of the event.
         bypass_conflict_check: If True, do not check for overlapping events.
+        all_day: If True, create a full-day event (shown as "All day" in
+            Google Calendar) instead of a timed event.
 
     Returns:
         dict with 'status' ('success' or 'error' or 'conflict'), 'event_url' on success,
@@ -281,55 +294,72 @@ def create_calendar_event(
                     user.google_credentials = updated_creds
                     db.commit()
 
-                # Fetch the timezone of the chosen calendar
-                try:
-                    calendar_metadata = (
-                        service.calendars()
-                        .get(calendarId=user.default_calendar_id)
-                        .execute()
-                    )
-                    timezone = calendar_metadata.get("timeZone", "UTC")
-                except Exception:
-                    timezone = "UTC"
+                if all_day:
+                    start_date = datetime.fromisoformat(date).date()
+                    end_date = start_date + timedelta(days=1)
+                else:
+                    # Fetch the timezone of the chosen calendar
+                    try:
+                        calendar_metadata = (
+                            service.calendars()
+                            .get(calendarId=user.default_calendar_id)
+                            .execute()
+                        )
+                        timezone = calendar_metadata.get("timeZone", "UTC")
+                    except Exception:
+                        timezone = "UTC"
 
-                from app.database import get_calendar_duration
+                    from app.database import get_calendar_duration
 
-                duration = get_calendar_duration(db, telegram_id, user.default_calendar_id)
-                start_dt = datetime.fromisoformat(f"{date}T{time}:00")
-                end_dt = start_dt + timedelta(minutes=duration)
+                    duration = get_calendar_duration(db, telegram_id, user.default_calendar_id)
+                    start_dt = datetime.fromisoformat(f"{date}T{time}:00")
+                    end_dt = start_dt + timedelta(minutes=duration)
 
                 # Check for conflicts if not bypassed
                 if not bypass_conflict_check:
                     try:
-                        import pytz
-                        tz = pytz.timezone(timezone)
-                        localized_start = tz.localize(start_dt)
-                        localized_end = tz.localize(end_dt)
-
-                        # Query events overlapping with this day/time
-                        events_result = (
-                            service.events()
-                            .list(
-                                calendarId=user.default_calendar_id,
-                                timeMin=localized_start.isoformat(),
-                                timeMax=localized_end.isoformat(),
-                                singleEvents=True,
+                        if all_day:
+                            events_result = (
+                                service.events()
+                                .list(
+                                    calendarId=user.default_calendar_id,
+                                    timeMin=f"{start_date.isoformat()}T00:00:00Z",
+                                    timeMax=f"{end_date.isoformat()}T00:00:00Z",
+                                    singleEvents=True,
+                                )
+                                .execute()
                             )
-                            .execute()
-                        )
-                        events_list = events_result.get("items", [])
+                            actual_conflicts = events_result.get("items", [])
+                        else:
+                            import pytz
+                            tz = pytz.timezone(timezone)
+                            localized_start = tz.localize(start_dt)
+                            localized_end = tz.localize(end_dt)
 
-                        actual_conflicts = []
-                        for e in events_list:
-                            e_start_raw = e.get("start", {}).get("dateTime")
-                            e_end_raw = e.get("end", {}).get("dateTime")
-                            if e_start_raw and e_end_raw:
-                                e_start = datetime.fromisoformat(e_start_raw.replace("Z", "+00:00"))
-                                e_end = datetime.fromisoformat(e_end_raw.replace("Z", "+00:00"))
+                            # Query events overlapping with this day/time
+                            events_result = (
+                                service.events()
+                                .list(
+                                    calendarId=user.default_calendar_id,
+                                    timeMin=localized_start.isoformat(),
+                                    timeMax=localized_end.isoformat(),
+                                    singleEvents=True,
+                                )
+                                .execute()
+                            )
+                            events_list = events_result.get("items", [])
 
-                                # Strictly check overlap
-                                if e_start < localized_end and e_end > localized_start:
-                                    actual_conflicts.append(e)
+                            actual_conflicts = []
+                            for e in events_list:
+                                e_start_raw = e.get("start", {}).get("dateTime")
+                                e_end_raw = e.get("end", {}).get("dateTime")
+                                if e_start_raw and e_end_raw:
+                                    e_start = datetime.fromisoformat(e_start_raw.replace("Z", "+00:00"))
+                                    e_end = datetime.fromisoformat(e_end_raw.replace("Z", "+00:00"))
+
+                                    # Strictly check overlap
+                                    if e_start < localized_end and e_end > localized_start:
+                                        actual_conflicts.append(e)
 
                         if actual_conflicts:
                             # Save pending event details
@@ -340,6 +370,7 @@ def create_calendar_event(
                                 "time": time,
                                 "location": location,
                                 "description": description,
+                                "all_day": all_day,
                             }, commit=True)
                             conflict_names = ", ".join([f"'{e.get('summary', 'Untitled')}'" for e in actual_conflicts])
                             return {
@@ -349,11 +380,18 @@ def create_calendar_event(
                     except Exception as e:
                         logger.warning("Error checking for event conflicts: %s", e)
 
-                event_body = {
-                    "summary": title,
-                    "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
-                    "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
-                }
+                if all_day:
+                    event_body = {
+                        "summary": title,
+                        "start": {"date": start_date.isoformat()},
+                        "end": {"date": end_date.isoformat()},
+                    }
+                else:
+                    event_body = {
+                        "summary": title,
+                        "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
+                        "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
+                    }
                 if location:
                     event_body["location"] = location
                 if description:
@@ -376,8 +414,12 @@ def create_calendar_event(
                 "status": "error",
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+        except Exception:
+            logger.exception("Error creating calendar event for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while creating the event. Please try again later.",
+            }
 
 
 def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
@@ -467,5 +509,9 @@ def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
                 "status": "error",
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+        except Exception:
+            logger.exception("Error fetching upcoming events for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while fetching your events. Please try again later.",
+            }
