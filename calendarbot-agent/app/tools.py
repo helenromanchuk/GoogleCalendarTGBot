@@ -201,8 +201,13 @@ def get_user_calendars(telegram_id: int, tool_context: Any) -> dict:
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
                 "calendars": [],
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc), "calendars": []}
+        except Exception:
+            logger.exception("Error listing calendars for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while retrieving your calendars. Please try again later.",
+                "calendars": [],
+            }
 
 
 def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) -> dict:
@@ -223,9 +228,13 @@ def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) 
             user.default_calendar_id = calendar_id
             db.commit()
             return {"status": "success"}
-        except Exception as exc:
+        except Exception:
             db.rollback()
-            return {"status": "error", "message": str(exc)}
+            logger.exception("Error setting default calendar for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while saving your calendar choice. Please try again later.",
+            }
 
 
 def create_calendar_event(
@@ -405,8 +414,12 @@ def create_calendar_event(
                 "status": "error",
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+        except Exception:
+            logger.exception("Error creating calendar event for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while creating the event. Please try again later.",
+            }
 
 
 def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
@@ -496,5 +509,9 @@ def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
                 "status": "error",
                 "message": "Your Google session has expired. Please use /start to reconnect your account.",
             }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+        except Exception:
+            logger.exception("Error fetching upcoming events for user %d", telegram_id)
+            return {
+                "status": "error",
+                "message": "An unexpected error occurred while fetching your events. Please try again later.",
+            }

@@ -539,7 +539,9 @@ def test_get_user_calendars_generic_exception(mock_build: MagicMock) -> None:
 
     res = get_user_calendars(telegram_id=76003, tool_context=None)
     assert res["status"] == "error"
-    assert res["message"] == "boom"
+    # Raw exception text must not leak to the user-facing message.
+    assert "boom" not in res["message"]
+    assert "unexpected error" in res["message"]
     assert res["calendars"] == []
 
 
@@ -554,7 +556,9 @@ def test_set_default_calendar_exception(mock_get_or_create: MagicMock) -> None:
 
     res = set_default_calendar(76004, "some-cal", None)
     assert res["status"] == "error"
-    assert res["message"] == "db exploded"
+    # Raw exception text must not leak to the user-facing message.
+    assert "db exploded" not in res["message"]
+    assert "unexpected error" in res["message"]
 
 
 def test_create_calendar_event_mock_user() -> None:
@@ -720,7 +724,9 @@ def test_create_calendar_event_generic_exception(mock_build: MagicMock) -> None:
         tool_context=None,
     )
     assert res["status"] == "error"
-    assert res["message"] == "boom"
+    # Raw exception text must not leak to the user-facing message.
+    assert "boom" not in res["message"]
+    assert "unexpected error" in res["message"]
 
 
 def test_get_upcoming_events_not_authenticated() -> None:
@@ -781,6 +787,8 @@ def test_get_upcoming_events_generic_exception(mock_build: MagicMock) -> None:
 
     res = get_upcoming_events(telegram_id=76013)
     assert res["status"] == "error"
-    assert res["message"] == "boom"
+    # Raw exception text must not leak to the user-facing message.
+    assert "boom" not in res["message"]
+    assert "unexpected error" in res["message"]
 
 

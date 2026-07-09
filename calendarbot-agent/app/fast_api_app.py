@@ -23,6 +23,7 @@ Mounts:
 import html
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -108,7 +109,7 @@ async def telegram_webhook(request: Request):
     from app.telegram_app import bot, dp
 
     secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_token != settings.webhook_secret:
+    if not secrets.compare_digest(secret_token or "", settings.webhook_secret):
         raise HTTPException(status_code=401, detail="Unauthorized webhook call")
 
     update_data = await request.json()
@@ -196,8 +197,11 @@ async def oauth2callback(request: Request):
 
     except Exception as exc:
         logger.exception("OAuth callback error for user %d: %s", telegram_id, exc)
+        # Deliberately generic: exception text can contain internal details
+        # (library errors, endpoints, token fragments) and must not reach the browser.
         return HTMLResponse(
-            f"<h1>An error occurred</h1><p>{html.escape(str(exc))}</p>"
+            "<h1>An error occurred</h1>"
+            "<p>Something went wrong while connecting your Google account.</p>"
             "<p>Please try again from Telegram.</p>",
             status_code=500,
         )

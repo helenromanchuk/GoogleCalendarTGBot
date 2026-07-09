@@ -1709,7 +1709,9 @@ async def test_cmd_upcoming_generic_error(mock_chat_action: AsyncMock) -> None:
     message.answer.assert_called_once()
     args, _ = message.answer.call_args
     assert "Error fetching events" in args[0]
-    assert "quota exceeded" in args[0]
+    # Raw exception text must not leak into the chat message.
+    assert "quota exceeded" not in args[0]
+    assert "unexpected error" in args[0]
 
 
 @pytest.mark.asyncio

@@ -115,27 +115,32 @@ def test_oauth_callback_xss_protection() -> None:
     assert malicious_input not in response.text
 
 
-def test_oauth_callback_exception_xss_protection() -> None:
-    """Verify that exception messages are HTML-escaped on OAuth error page."""
+def test_oauth_callback_exception_not_leaked() -> None:
+    """Verify that exception details never reach the OAuth error page.
+
+    Exception text can contain internal details (library errors, endpoints,
+    token fragments), so the error page must show a generic message only.
+    """
     telegram_id = 999000222
     code_verifier = "some_code_verifier_123"
     state_token = generate_oauth_state(telegram_id, code_verifier)
 
-    # Make Flow fetch_token raise a custom exception containing malicious HTML payload
-    malicious_err_msg = "Error: <img src=x onerror=alert('XSS')>"
+    err_msg = "internal detail: token endpoint https://oauth2.googleapis.com/token rejected <script>"
     with patch("google_auth_oauthlib.flow.Flow.from_client_config") as mock_flow_class:
         mock_flow = MagicMock()
         mock_flow_class.return_value = mock_flow
-        mock_flow.fetch_token.side_effect = RuntimeError(malicious_err_msg)
+        mock_flow.fetch_token.side_effect = RuntimeError(err_msg)
 
         response = client.get(
             "/oauth2callback",
             params={"code": "auth-code-123", "state": state_token},
         )
         assert response.status_code == 500
-        # The output HTML should contain escaped error message
-        assert html.escape(malicious_err_msg) in response.text
-        assert malicious_err_msg not in response.text
+        # Neither the raw nor the escaped exception text may appear in the page.
+        assert err_msg not in response.text
+        assert html.escape(err_msg) not in response.text
+        assert "internal detail" not in response.text
+        assert "An error occurred" in response.text
 
 
 def test_oauth_callback_notify_failure_still_succeeds() -> None:
