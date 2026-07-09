@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import html
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -136,3 +136,35 @@ def test_oauth_callback_exception_xss_protection() -> None:
         # The output HTML should contain escaped error message
         assert html.escape(malicious_err_msg) in response.text
         assert malicious_err_msg not in response.text
+
+
+def test_oauth_callback_notify_failure_still_succeeds() -> None:
+    """If notifying the user via Telegram fails after a successful token exchange,
+    the OAuth flow must still be reported as successful (the failure is only logged)."""
+    telegram_id = 999000333
+    code_verifier = "some_code_verifier_456"
+    state_token = generate_oauth_state(telegram_id, code_verifier)
+
+    with (
+        patch("google_auth_oauthlib.flow.Flow.from_client_config") as mock_flow_class,
+        patch("app.telegram_app.bot.send_message", new_callable=AsyncMock) as mock_send,
+    ):
+        mock_flow = MagicMock()
+        mock_flow_class.return_value = mock_flow
+        mock_flow.credentials.to_json.return_value = '{"token": "test-token"}'
+        mock_send.side_effect = RuntimeError("Telegram unreachable")
+
+        response = client.get(
+            "/oauth2callback",
+            params={"code": "auth-code-123", "state": state_token},
+        )
+
+        assert response.status_code == 200
+        assert "Authentication Successful!" in response.text
+
+        # Credentials must still have been saved even though the notification failed.
+        db = SessionLocal()
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        assert user is not None
+        assert user.google_credentials == '{"token": "test-token"}'
+        db.close()

@@ -82,6 +82,16 @@ resource "google_cloud_run_v2_service" "app" {
           }
         }
       }
+
+      env {
+        name  = "WEBHOOK_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.webhook_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
 
     service_account = google_service_account.app_sa.email

@@ -76,20 +76,22 @@ Extract from the user's message text (ignore the metadata prefix):
 - title: a short descriptive event title (name)
 - date: in YYYY-MM-DD format. Resolve relative dates using today's date from the prefix.
   E.g. "tomorrow" = today + 1 day, "next Monday" = next Monday's date.
-- time: start time in HH:MM 24-hour format
+- all_day: true if the user says 'all day', 'whole day', 'весь день', or otherwise
+  clearly does not intend to specify a start time; false otherwise.
+- time: start time in HH:MM 24-hour format. Not needed when all_day is true.
 - location: location or place of the event, if mentioned (otherwise None)
 - description: any additional description or details mentioned, if any (otherwise None)
 
 If the date is missing, you MUST ask for it using the exact text: "📅 Please specify the date for the event:" (or "📅 Укажите дату для события:" if the conversation is in Russian).
-If the time is missing, you MUST ask for it using the exact text: "🕒 Please specify the start time for the event:" (or "🕒 Укажите время начала события:" if the conversation is in Russian).
+If the time is missing and all_day is not true, you MUST ask for it using the exact text: "🕒 Please specify the start time for the event:" (or "🕒 Укажите время начала события:" if the conversation is in Russian).
 Wait for the user's reply before creating the event.
 
-- Once you have title, date (YYYY-MM-DD), and time (HH:MM):
-  Call create_calendar_event with telegram_id, title, date, time, location, and description.
+- Once you have title, date (YYYY-MM-DD), and either time (HH:MM) or all_day=true:
+  Call create_calendar_event with telegram_id, title, date, time (omit/None if all_day), location, description, and all_day.
 
   If creation succeeds, reply:
   "✅ Event created!
-  📅 **[formatted date and time]**
+  📅 **[formatted date, and time unless all_day — then show 'All day' instead]**
   🏷️ **[event title]**
   📍 **[location or 'Not specified'/'Не указано']**
   📝 **[description or 'Not specified'/'Не указано']**
@@ -99,8 +101,8 @@ Wait for the user's reply before creating the event.
 
 ## Important rules
 - NEVER invent dates or times — always ask if missing
-- NEVER call create_calendar_event if date or time is missing
-- If the user says 'all day' or 'whole day' or 'весь день', use time='09:00'
+- NEVER call create_calendar_event if date is missing, or if time is missing and all_day is not true
+- If the user says 'all day' or 'whole day' or 'весь день', call create_calendar_event with all_day=True — do NOT invent a start time like '09:00' for it
 - Be concise and friendly; use emojis sparingly (✅ 📅)
 - Respond in the same language the user wrote in (English or Russian). If the user wrote in Russian, output the confirmation link text as "Посмотреть в Google Календаре" (or "View in Google Calendar" in English), and place/description as 'Не указано' if not specified.
 """

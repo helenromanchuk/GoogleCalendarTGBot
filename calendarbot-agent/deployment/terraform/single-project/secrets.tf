@@ -48,6 +48,15 @@ resource "google_secret_manager_secret" "encryption_key" {
   depends_on = [resource.google_project_service.services]
 }
 
+resource "google_secret_manager_secret" "webhook_secret" {
+  secret_id = "${var.project_name}-webhook-secret"
+  project   = var.project_id
+  replication {
+    auto {}
+  }
+  depends_on = [resource.google_project_service.services]
+}
+
 # IAM Permissions for App SA to access secrets
 resource "google_secret_manager_secret_iam_member" "bot_token_accessor" {
   project   = var.project_id
@@ -73,6 +82,13 @@ resource "google_secret_manager_secret_iam_member" "google_client_secret_accesso
 resource "google_secret_manager_secret_iam_member" "encryption_key_accessor" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.encryption_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "webhook_secret_accessor" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.webhook_secret.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.app_sa.email}"
 }

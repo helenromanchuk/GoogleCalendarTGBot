@@ -122,6 +122,7 @@ calendarbot-agent/
 | `GOOGLE_CLIENT_ID` | Google OAuth 2.0 client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client secret |
 | `ENCRYPTION_KEY` | Fernet key for token encryption at rest |
+| `WEBHOOK_SECRET` | Telegram webhook secret token. Required in production (see below) — if unset, a random value is generated per process, which breaks webhook validation once the service scales beyond one instance |
 | `BASE_URL` | Public URL of this service (for webhook + OAuth redirect) |
 | `DATABASE_URL` | SQLite URL (default: `sqlite:///./data/calendar_bot.db`) |
 | `REDIS_URL` | Redis connection URL |
