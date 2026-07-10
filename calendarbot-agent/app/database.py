@@ -101,7 +101,7 @@ def migrate_db() -> None:
                     text("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
                 )
             }
-        
+
         if "pending_event_data" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN pending_event_data TEXT"))
             conn.commit()
@@ -219,6 +219,6 @@ def set_pending_event(
         user.pending_event_data = None
     else:
         user.pending_event_data = json.dumps(data)
-    
+
     if commit:
         db.commit()

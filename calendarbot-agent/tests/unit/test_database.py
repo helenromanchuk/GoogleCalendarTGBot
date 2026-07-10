@@ -55,7 +55,11 @@ def test_database_operations() -> None:
 
 
 def test_calendar_duration_operations() -> None:
-    from app.database import CalendarDuration, get_calendar_duration, set_calendar_duration
+    from app.database import (
+        CalendarDuration,
+        get_calendar_duration,
+        set_calendar_duration,
+    )
 
     db = SessionLocal()
     try:
@@ -84,7 +88,11 @@ def test_calendar_duration_operations() -> None:
 
 
 def test_get_set_calendar_duration_empty_calendar_id_is_noop() -> None:
-    from app.database import CalendarDuration, get_calendar_duration, set_calendar_duration
+    from app.database import (
+        CalendarDuration,
+        get_calendar_duration,
+        set_calendar_duration,
+    )
 
     db = SessionLocal()
     try:

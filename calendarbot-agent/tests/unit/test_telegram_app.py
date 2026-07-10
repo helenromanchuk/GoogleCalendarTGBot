@@ -539,8 +539,8 @@ async def test_send_formatted_response_conflict_russian() -> None:
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999123
     with session_scope() as db:
@@ -579,7 +579,7 @@ async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock)
 
     callback.message.edit_reply_markup.assert_called_once_with(reply_markup=None)
     callback.message.answer.assert_called_once()
-    args, kwargs = callback.message.answer.call_args
+    args, _kwargs = callback.message.answer.call_args
     assert "✅ Event created!" in args[0]
     assert "Conflicting Party" in args[0]
     assert "https://calendar.google.com/event?id=123" in args[0]
@@ -591,8 +591,8 @@ async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock)
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999124
     with session_scope() as db:
@@ -619,7 +619,7 @@ async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: Ma
 
     callback.message.edit_reply_markup.assert_called_once_with(reply_markup=None)
     callback.message.answer.assert_called_once()
-    args, kwargs = callback.message.answer.call_args
+    args, _kwargs = callback.message.answer.call_args
     assert "✅ Событие создано!" in args[0]
     assert "Встреча" in args[0]
     callback.answer.assert_called_once()
@@ -630,8 +630,8 @@ async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: Ma
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_all_day_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999128
     with session_scope() as db:
@@ -680,8 +680,8 @@ async def test_callback_conflict_add_anyway_all_day_success(mock_chat_action: Ma
 
 @pytest.mark.asyncio
 async def test_callback_conflict_add_anyway_no_pending() -> None:
-    from app.telegram_app import callback_conflict_add_anyway
     from app.database import session_scope, set_pending_event
+    from app.telegram_app import callback_conflict_add_anyway
 
     telegram_id = 999125
     with session_scope() as db:
@@ -698,8 +698,8 @@ async def test_callback_conflict_add_anyway_no_pending() -> None:
 
 @pytest.mark.asyncio
 async def test_callback_conflict_another_english() -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_another
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999126
     with session_scope() as db:
@@ -723,8 +723,8 @@ async def test_callback_conflict_another_english() -> None:
 
 @pytest.mark.asyncio
 async def test_callback_conflict_another_russian() -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_another
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999127
     with session_scope() as db:
@@ -748,8 +748,9 @@ async def test_callback_conflict_another_russian() -> None:
 
 @pytest.mark.asyncio
 async def test_show_calendar_picker_auth_error() -> None:
-    from app.telegram_app import _show_calendar_picker
     from google.auth.exceptions import RefreshError
+
+    from app.telegram_app import _show_calendar_picker
 
     telegram_id = 999333
     db = SessionLocal()
@@ -815,8 +816,9 @@ async def test_show_calendar_picker_http_error_auth() -> None:
 
 @pytest.mark.asyncio
 async def test_cmd_status_auth_error() -> None:
-    from app.telegram_app import cmd_status
     from google.auth.exceptions import RefreshError
+
+    from app.telegram_app import cmd_status
 
     telegram_id = 999334
     db = SessionLocal()
@@ -1043,7 +1045,7 @@ async def test_run_agent_timeout() -> None:
 
     def _raise_timeout(coro, timeout=None):
         coro.close()  # Avoid an unawaited-coroutine warning since the mock never runs it.
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     with (
         patch(

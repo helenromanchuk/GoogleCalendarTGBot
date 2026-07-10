@@ -22,7 +22,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app.config import settings
-from app.database import SessionLocal, get_or_create_user, get_user, session_scope
+from app.database import get_or_create_user, get_user, session_scope
 
 logger = logging.getLogger(__name__)
 

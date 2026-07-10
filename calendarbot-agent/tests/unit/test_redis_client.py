@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.redis_client import FallbackRedisClient, generate_oauth_state, verify_oauth_state
+from app.redis_client import (
+    FallbackRedisClient,
+    generate_oauth_state,
+    verify_oauth_state,
+)
 
 
 def test_generate_and_verify_oauth_state() -> None:

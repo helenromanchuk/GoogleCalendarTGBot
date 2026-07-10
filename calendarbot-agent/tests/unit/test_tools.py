@@ -213,7 +213,7 @@ def test_create_calendar_event_all_day_conflict(mock_build_service: MagicMock) -
 
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
-    from app.database import set_pending_event, get_pending_event
+    from app.database import get_pending_event, set_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -276,7 +276,7 @@ def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict_bypass(mock_build_service: MagicMock) -> None:
-    from app.database import set_pending_event, get_pending_event
+    from app.database import get_pending_event, set_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -371,8 +371,9 @@ def test_create_calendar_event_refresh_error(mock_build: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_get_user_calendars_refresh_error(mock_build: MagicMock) -> None:
-    from app.tools import get_user_calendars
     from google.auth.exceptions import RefreshError
+
+    from app.tools import get_user_calendars
     mock_build.side_effect = RefreshError("revoked")
 
     db = SessionLocal()
@@ -396,8 +397,9 @@ def test_get_user_calendars_refresh_error(mock_build: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_get_upcoming_events_refresh_error(mock_build: MagicMock) -> None:
-    from app.tools import get_upcoming_events
     from google.auth.exceptions import RefreshError
+
+    from app.tools import get_upcoming_events
     mock_build.side_effect = RefreshError("revoked")
 
     db = SessionLocal()

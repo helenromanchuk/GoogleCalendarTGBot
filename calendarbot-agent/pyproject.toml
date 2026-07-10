@@ -66,6 +66,9 @@ select = [
     "RUF", # ruff specific rules
 ]
 ignore = ["E501", "C901", "B006"] # ignore line too long, too complex
+# The bot officially supports Russian, so Cyrillic letters that look like Latin
+# ones are expected in user-facing strings; the dashes appear in telemetry docs.
+allowed-confusables = ["В", "Н", "е", "с", "‑", "–"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "frontend"]

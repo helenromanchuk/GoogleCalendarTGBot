@@ -9,7 +9,7 @@ Architecture:
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timezone, timedelta
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -170,7 +170,7 @@ async def _run_agent(telegram_id: int, user_message: str) -> str:
 
     try:
         return await asyncio.wait_for(_collect_response(), timeout=AGENT_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Agent timed out after %ds for user %d", AGENT_TIMEOUT_SECONDS, telegram_id)
         return "⏱️ Sorry, the request timed out. Please try again."
 
@@ -228,7 +228,7 @@ async def cmd_start(message: types.Message, state: FSMContext) -> None:
         "You are fully connected and ready to go. Simply send me a message describing your event, and I will handle the rest!\n\n"
         "💡 <b>Example Messages:</b>\n"
         '• <i>"Doctor appointment next Monday at 10am"</i>\n'
-        '• <i>"Встреча с клиентом в пятницу в 11:00"</i>\n'  # noqa: RUF001
+        '• <i>"Встреча с клиентом в пятницу в 11:00"</i>\n'
         '• <i>"Dinner with family on Saturday at 7pm"</i>\n\n'
         "⏱️ <b>Helpful Commands:</b>\n"
         "• /upcoming — View your next 5 events\n"
@@ -478,7 +478,7 @@ async def callback_calendar_selected(
         f"✅ Default calendar set to: <b>{chosen['name']}</b> (Time Zone: <code>{timezone}</code>, Default Duration: <code>{duration} min</code>)\n\n"
         "Now send me any event to add it. For example:\n"
         "• 'Team meeting tomorrow at 3pm'\n"
-        "• 'Звонок с клиентом в пятницу в 11:00'",  # noqa: RUF001
+        "• 'Звонок с клиентом в пятницу в 11:00'",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -677,7 +677,7 @@ async def cmd_help(message: types.Message) -> None:
         "📅 <b>How to Add Events:</b>\n"
         "Simply send me a text message describing the event you want to create. For example:\n"
         '• <i>"Meeting with Bob tomorrow at 5pm"</i>\n'
-        '• <i>"Встреча с клиентом в пятницу в 11:00"</i>\n'  # noqa: RUF001
+        '• <i>"Встреча с клиентом в пятницу в 11:00"</i>\n'
         '• <i>"Team lunch next Monday"</i>\n\n'
         "If some details (like date or time) are missing, I'll prompt you using inline buttons!"
     )
@@ -905,8 +905,8 @@ async def callback_conflict_add_anyway(
     """Handle clicking 'Add anyway' button when there is a scheduling conflict."""
     telegram_id = callback.from_user.id
 
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.tools import create_calendar_event
-    from app.database import session_scope, get_pending_event, set_pending_event
 
     with session_scope() as db:
         pending = get_pending_event(db, telegram_id)
