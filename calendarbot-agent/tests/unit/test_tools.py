@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.calendar_timezone import cache_timezone
 from app.database import SessionLocal, get_or_create_user, init_db
 from app.tools import (
     create_calendar_event,
@@ -144,6 +145,42 @@ def test_create_calendar_event(mock_build_service: MagicMock) -> None:
     mock_service.calendars.assert_not_called()
 
 
+@pytest.mark.parametrize("fetched_at", [None, 1700000000 - 300])
+@patch("app.tools._build_calendar_service")
+def test_create_event_refreshes_stale_timezone(mock_build_service, fetched_at):
+    mock_service = MagicMock()
+    mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    mock_service.events.return_value.insert.return_value.execute.return_value = {
+        "htmlLink": "https://event-link"
+    }
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77793)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "test-calendar"
+        user.timezone = "Europe/Moscow"
+        user.timezone_fetched_at = fetched_at
+        db.commit()
+
+    with patch("app.calendar_timezone.time", return_value=1700000000):
+        result = create_calendar_event(
+            77793, "Meeting", "2026-06-25", "15:30", bypass_conflict_check=True
+        )
+
+    assert result["status"] == "success"
+    body = mock_service.events.return_value.insert.call_args.kwargs["body"]
+    assert body["start"] == {
+        "dateTime": "2026-06-25T15:30:00",
+        "timeZone": "America/Los_Angeles",
+    }
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77793)
+        assert user.timezone == "America/Los_Angeles"
+        assert user.timezone_fetched_at == 1700000000
+
+
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: MagicMock) -> None:
     """All-day events must be created with Google Calendar's 'date' fields, not
@@ -247,7 +284,7 @@ def test_all_day_conflict_window_spans_local_day(mock_build_service, date, start
         user = get_or_create_user(db, 77792)
         user.google_credentials = '{"token": "test-token"}'
         user.default_calendar_id = "test-calendar"
-        user.timezone = "America/Los_Angeles"
+        cache_timezone(user, "America/Los_Angeles")
         db.commit()
 
     def overlapping_events(**kwargs):

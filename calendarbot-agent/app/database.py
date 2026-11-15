@@ -86,6 +86,7 @@ class User(Base):
     default_duration_minutes = Column(Integer, default=60)
     pending_event_data = Column(EncryptedText, nullable=True)  # JSON string, Fernet-encrypted
     timezone = Column(String, nullable=True)
+    timezone_fetched_at = Column(BigInteger, nullable=True)
 
 
 class CalendarDuration(Base):
@@ -133,6 +134,8 @@ def _apply_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE users ADD COLUMN pending_event_data TEXT"))
     if "timezone" not in existing:
         conn.execute(text("ALTER TABLE users ADD COLUMN timezone TEXT"))
+    if "timezone_fetched_at" not in existing:
+        conn.execute(text("ALTER TABLE users ADD COLUMN timezone_fetched_at BIGINT"))
 
 
 # Database tables are initialized explicitly in FastAPI lifespan or in test setup.

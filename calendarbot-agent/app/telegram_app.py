@@ -23,6 +23,7 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types as genai_types
 
 from app.agent import app as adk_app
+from app.calendar_timezone import cache_timezone, get_cached_timezone
 from app.config import settings
 from app.database import get_or_create_user, get_user, session_scope
 
@@ -85,8 +86,9 @@ async def _get_user_timezone(telegram_id: int) -> str:
             user = get_user(db, telegram_id)
             if not user or not user.google_credentials:
                 return "UTC"
-            if user.timezone:
-                return user.timezone
+            cached_timezone = get_cached_timezone(user)
+            if cached_timezone is not None:
+                return cached_timezone
             try:
                 from app.tools import _build_calendar_service
                 service, updated_creds = _build_calendar_service(user.google_credentials)
@@ -95,7 +97,7 @@ async def _get_user_timezone(telegram_id: int) -> str:
                 cal_id = user.default_calendar_id or "primary"
                 calendar_metadata = service.calendars().get(calendarId=cal_id).execute()
                 tz = calendar_metadata.get("timeZone", "UTC")
-                user.timezone = tz
+                cache_timezone(user, tz)
                 db.commit()
                 return tz
             except Exception:
@@ -294,8 +296,8 @@ async def cmd_status(message: types.Message) -> None:
                 calendar_metadata = service.calendars().get(calendarId=cal_id).execute()
                 summary = calendar_metadata.get("summary", "Unknown")
                 timezone = calendar_metadata.get("timeZone", "Unknown")
-                if timezone != "Unknown" and user.timezone != timezone:
-                    user.timezone = timezone
+                if timezone != "Unknown":
+                    cache_timezone(user, timezone)
                     db.commit()
 
             escaped_summary = html.escape(summary)
@@ -492,7 +494,7 @@ async def callback_calendar_selected(
                     service.calendars().get(calendarId=chosen["id"]).execute()
                 )
                 timezone = calendar_metadata.get("timeZone", "UTC")
-                user.timezone = timezone
+                cache_timezone(user, timezone)
                 db.commit()
 
                 from app.database import get_calendar_duration

@@ -229,6 +229,7 @@ def test_migrate_db_adds_missing_column(tmp_path, monkeypatch) -> None:
             cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         assert "pending_event_data" in cols
         assert "timezone" in cols
+        assert "timezone_fetched_at" in cols
     finally:
         temp_engine.dispose()
 
@@ -304,6 +305,6 @@ def test_concurrent_initialization_serializes_schema_changes(tmp_path, monkeypat
 
         with temp_engine.connect() as conn:
             cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
-        assert {"pending_event_data", "timezone"} <= cols
+        assert {"pending_event_data", "timezone", "timezone_fetched_at"} <= cols
     finally:
         temp_engine.dispose()

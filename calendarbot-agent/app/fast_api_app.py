@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
         await bot.set_webhook(
             url=WEBHOOK_URL,
             secret_token=settings.webhook_secret,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
         )
         logger.info("Telegram webhook registered at %s", WEBHOOK_URL)
     except Exception as exc:

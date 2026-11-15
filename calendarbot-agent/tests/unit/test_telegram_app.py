@@ -917,6 +917,41 @@ async def test_get_user_timezone_real_success() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fetched_at", [None, 1700000000 - 300])
+async def test_user_today_refreshes_stale_calendar_timezone(fetched_at) -> None:
+    from datetime import UTC, datetime
+
+    from app.telegram_app import _get_user_today_str
+
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 556203)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "cal-1"
+        user.timezone = "Europe/Moscow"
+        user.timezone_fetched_at = fetched_at
+        db.commit()
+
+    mock_service = MagicMock()
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    instant = datetime(2026, 6, 25, 1, tzinfo=UTC)
+    with (
+        patch("app.calendar_timezone.time", return_value=1700000000),
+        patch("app.tools._build_calendar_service", return_value=(mock_service, '{"token": "test-token"}')),
+        patch("app.telegram_app.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.side_effect = lambda tz: instant.astimezone(tz)
+        assert await _get_user_today_str(556203) == "2026-06-24"
+
+    mock_service.calendars.return_value.get.assert_called_once_with(calendarId="cal-1")
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 556203)
+        assert user.timezone == "America/Los_Angeles"
+        assert user.timezone_fetched_at == 1700000000
+
+
+@pytest.mark.asyncio
 async def test_get_user_timezone_exception_falls_back_to_utc() -> None:
     from app.telegram_app import _get_user_timezone
 

@@ -50,7 +50,7 @@ def test_lifespan_registers_webhook_successfully(mock_set_webhook: AsyncMock) ->
     mock_set_webhook.assert_called_once()
     _, kwargs = mock_set_webhook.call_args
     assert kwargs["secret_token"] == settings.webhook_secret
-    assert kwargs["drop_pending_updates"] is True
+    assert kwargs["drop_pending_updates"] is False
 
 
 @patch("app.telegram_app.bot.set_webhook", new_callable=AsyncMock)

@@ -21,6 +21,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
+from app.calendar_timezone import cache_timezone, get_cached_timezone
 from app.config import settings
 from app.database import get_or_create_user, get_user, session_scope
 
@@ -298,10 +299,8 @@ def create_calendar_event(
                     db.commit()
 
                 if not all_day or not bypass_conflict_check:
-                    # Use cached timezone when available; otherwise fetch once and persist
-                    if user.timezone:
-                        timezone = user.timezone
-                    else:
+                    timezone = get_cached_timezone(user)
+                    if timezone is None:
                         try:
                             calendar_metadata = (
                                 service.calendars()
@@ -309,7 +308,7 @@ def create_calendar_event(
                                 .execute()
                             )
                             timezone = calendar_metadata.get("timeZone", "UTC")
-                            user.timezone = timezone
+                            cache_timezone(user, timezone)
                             db.commit()
                         except Exception:
                             timezone = "UTC"
