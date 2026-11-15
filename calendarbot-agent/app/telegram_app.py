@@ -85,15 +85,19 @@ async def _get_user_timezone(telegram_id: int) -> str:
             user = get_user(db, telegram_id)
             if not user or not user.google_credentials:
                 return "UTC"
+            if user.timezone:
+                return user.timezone
             try:
                 from app.tools import _build_calendar_service
                 service, updated_creds = _build_calendar_service(user.google_credentials)
                 if updated_creds != user.google_credentials:
                     user.google_credentials = updated_creds
-                    db.commit()
                 cal_id = user.default_calendar_id or "primary"
                 calendar_metadata = service.calendars().get(calendarId=cal_id).execute()
-                return calendar_metadata.get("timeZone", "UTC")
+                tz = calendar_metadata.get("timeZone", "UTC")
+                user.timezone = tz
+                db.commit()
+                return tz
             except Exception:
                 return "UTC"
 
@@ -111,6 +115,17 @@ async def _get_user_today_str(telegram_id: int) -> str:
         tz = pytz.UTC
 
     return datetime.now(tz).strftime("%Y-%m-%d")
+
+
+async def _clear_agent_session(telegram_id: int) -> None:
+    """Delete the user's ADK session to avoid accumulating unbounded token history."""
+    session_id = f"tg_{telegram_id}"
+    try:
+        await session_service.delete_session(
+            app_name=APP_NAME, user_id=str(telegram_id), session_id=session_id
+        )
+    except Exception:
+        pass
 
 
 async def _run_agent(telegram_id: int, user_message: str) -> str:
@@ -169,10 +184,15 @@ async def _run_agent(telegram_id: int, user_message: str) -> str:
         )
 
     try:
-        return await asyncio.wait_for(_collect_response(), timeout=AGENT_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(_collect_response(), timeout=AGENT_TIMEOUT_SECONDS)
     except TimeoutError:
         logger.warning("Agent timed out after %ds for user %d", AGENT_TIMEOUT_SECONDS, telegram_id)
         return "⏱️ Sorry, the request timed out. Please try again."
+
+    if "✅ Event created!" in result or "✅ Событие создано!" in result:
+        await _clear_agent_session(telegram_id)
+
+    return result
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
@@ -183,6 +203,7 @@ async def cmd_start(message: types.Message, state: FSMContext) -> None:
     """Handle /start: check auth status and show OAuth link or calendar picker."""
     await state.clear()
     telegram_id = message.from_user.id
+    await _clear_agent_session(telegram_id)
 
     with session_scope() as db:
         user = get_user(db, telegram_id)
@@ -273,6 +294,9 @@ async def cmd_status(message: types.Message) -> None:
                 calendar_metadata = service.calendars().get(calendarId=cal_id).execute()
                 summary = calendar_metadata.get("summary", "Unknown")
                 timezone = calendar_metadata.get("timeZone", "Unknown")
+                if timezone != "Unknown" and user.timezone != timezone:
+                    user.timezone = timezone
+                    db.commit()
 
             escaped_summary = html.escape(summary)
             escaped_cal_id = html.escape(cal_id)
@@ -308,6 +332,7 @@ async def cmd_status(message: types.Message) -> None:
             if is_auth_error:
                 user.google_credentials = None
                 user.default_calendar_id = None
+                user.timezone = None
                 db.commit()
                 await message.answer(
                     "⚠️ <b>Status Error</b>: CalendarBot access has been revoked or expired.\n\n"
@@ -375,6 +400,7 @@ async def _show_calendar_picker(
                 )
                 user.google_credentials = None
                 user.default_calendar_id = None
+                user.timezone = None
                 db.commit()
 
                 from app.tools import get_google_auth_url
@@ -465,6 +491,8 @@ async def callback_calendar_selected(
                     service.calendars().get(calendarId=chosen["id"]).execute()
                 )
                 timezone = calendar_metadata.get("timeZone", "UTC")
+                user.timezone = timezone
+                db.commit()
 
                 from app.database import get_calendar_duration
                 duration = get_calendar_duration(db, telegram_id, chosen["id"])
@@ -781,9 +809,44 @@ async def handle_message(message: types.Message, state: FSMContext) -> None:
     if not user_text:
         return
 
-    # Include today's date context in the message for relative date parsing
+    with session_scope() as db:
+        user = get_user(db, telegram_id)
+        is_authed = bool(
+            (settings.testing and telegram_id == 12345)
+            or (user and user.google_credentials)
+        )
+        has_default_cal = bool(
+            (settings.testing and telegram_id == 12345)
+            or (user and user.default_calendar_id)
+        )
+
+    if not is_authed:
+        from app.tools import get_google_auth_url
+
+        res = await get_google_auth_url(telegram_id, None)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔗 Connect Google Account",
+                        url=res["auth_url"],
+                    )
+                ]
+            ]
+        )
+        await message.answer(
+            "🔒 Please connect your Google account first using the button below, then send your message again.",
+            reply_markup=keyboard,
+        )
+        return
+
+    if not has_default_cal:
+        await _show_calendar_picker(message, telegram_id, state)
+        return
+
+    # Include today's date context and pre-verified auth status in the message
     today = await _get_user_today_str(telegram_id)
-    augmented = f"[telegram_id={telegram_id}, today={today}]\n{user_text}"
+    augmented = f"[telegram_id={telegram_id}, today={today}, auth=ok]\n{user_text}"
 
     await bot.send_chat_action(message.chat.id, "typing")
     try:
@@ -805,7 +868,7 @@ async def callback_date_today(callback: types.CallbackQuery, state: FSMContext) 
     await callback.message.answer(f"📅 {simulated_input.capitalize()}")
 
     today = await _get_user_today_str(telegram_id)
-    augmented = f"[telegram_id={telegram_id}, today={today}]\n{simulated_input}"
+    augmented = f"[telegram_id={telegram_id}, today={today}, auth=ok]\n{simulated_input}"
     await bot.send_chat_action(callback.message.chat.id, "typing")
     try:
         response = await _run_agent(telegram_id, augmented)
@@ -842,13 +905,7 @@ async def callback_date_cancel(
     is_russian = "Укажите дату для события" in (callback.message.text or "")
     await callback.message.edit_reply_markup(reply_markup=None)
     telegram_id = callback.from_user.id
-    session_id = f"tg_{telegram_id}"
-    try:
-        await session_service.delete_session(
-            app_name=APP_NAME, user_id=str(telegram_id), session_id=session_id
-        )
-    except Exception:
-        pass
+    await _clear_agent_session(telegram_id)
     if is_russian:
         await callback.message.answer("❌ Создание события отменено.")
     else:
@@ -869,7 +926,7 @@ async def callback_time_whole_day(
     await callback.message.answer(f"🕒 {simulated_input.capitalize()}")
 
     today = await _get_user_today_str(telegram_id)
-    augmented = f"[telegram_id={telegram_id}, today={today}]\n{simulated_input}"
+    augmented = f"[telegram_id={telegram_id}, today={today}, auth=ok]\n{simulated_input}"
     await bot.send_chat_action(callback.message.chat.id, "typing")
     try:
         response = await _run_agent(telegram_id, augmented)
@@ -935,6 +992,7 @@ async def callback_conflict_add_anyway(
         )
 
         if res.get("status") == "success":
+            await _clear_agent_session(telegram_id)
             event_url = res.get("event_url", "")
             is_russian = "Все равно добавить" in (callback.message.text or "") or "это событие пересекается" in (callback.message.text or "")
 
@@ -1008,13 +1066,7 @@ async def callback_time_cancel(
     is_russian = "Укажите время начала события" in (callback.message.text or "")
     await callback.message.edit_reply_markup(reply_markup=None)
     telegram_id = callback.from_user.id
-    session_id = f"tg_{telegram_id}"
-    try:
-        await session_service.delete_session(
-            app_name=APP_NAME, user_id=str(telegram_id), session_id=session_id
-        )
-    except Exception:
-        pass
+    await _clear_agent_session(telegram_id)
     if is_russian:
         await callback.message.answer("❌ Создание события отменено.")
     else:

@@ -29,8 +29,13 @@ resource "google_cloud_run_v2_service" "app" {
       resources {
         limits = {
           cpu    = "1"
-          memory = "4Gi"
+          memory = "512Mi"
         }
+      }
+
+      volume_mounts {
+        name       = "sqlite-data"
+        mount_path = "/code/data"
       }
 
       env {
@@ -97,8 +102,17 @@ resource "google_cloud_run_v2_service" "app" {
     service_account = google_service_account.app_sa.email
     max_instance_request_concurrency = 8
 
+    volumes {
+      name = "sqlite-data"
+      gcs {
+        bucket        = google_storage_bucket.logs_data_bucket.name
+        read_only     = false
+        mount_options = ["only-dir=sqlite"]
+      }
+    }
+
     scaling {
-      min_instance_count = 1
+      min_instance_count = 0
       max_instance_count = 10
     }
 

@@ -195,6 +195,7 @@ def get_user_calendars(telegram_id: int, tool_context: Any) -> dict:
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",
@@ -225,6 +226,8 @@ def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) 
     with session_scope() as db:
         try:
             user = get_or_create_user(db, telegram_id)
+            if user.default_calendar_id != calendar_id:
+                user.timezone = None
             user.default_calendar_id = calendar_id
             db.commit()
             return {"status": "success"}
@@ -298,16 +301,21 @@ def create_calendar_event(
                     start_date = datetime.fromisoformat(date).date()
                     end_date = start_date + timedelta(days=1)
                 else:
-                    # Fetch the timezone of the chosen calendar
-                    try:
-                        calendar_metadata = (
-                            service.calendars()
-                            .get(calendarId=user.default_calendar_id)
-                            .execute()
-                        )
-                        timezone = calendar_metadata.get("timeZone", "UTC")
-                    except Exception:
-                        timezone = "UTC"
+                    # Use cached timezone when available; otherwise fetch once and persist
+                    if user.timezone:
+                        timezone = user.timezone
+                    else:
+                        try:
+                            calendar_metadata = (
+                                service.calendars()
+                                .get(calendarId=user.default_calendar_id)
+                                .execute()
+                            )
+                            timezone = calendar_metadata.get("timeZone", "UTC")
+                            user.timezone = timezone
+                            db.commit()
+                        except Exception:
+                            timezone = "UTC"
 
                     from app.database import get_calendar_duration
 
@@ -409,6 +417,7 @@ def create_calendar_event(
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",
@@ -504,6 +513,7 @@ def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",

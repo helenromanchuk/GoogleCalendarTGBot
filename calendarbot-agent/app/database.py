@@ -68,6 +68,7 @@ class User(Base):
     default_calendar_id = Column(String, nullable=True)
     default_duration_minutes = Column(Integer, default=60)
     pending_event_data = Column(EncryptedText, nullable=True)  # JSON string, Fernet-encrypted
+    timezone = Column(String, nullable=True)
 
 
 class CalendarDuration(Base):
@@ -85,8 +86,9 @@ class CalendarDuration(Base):
 
 
 def init_db() -> None:
-    """Create all tables (idempotent)."""
+    """Create all tables (idempotent) and apply additive schema migrations."""
     Base.metadata.create_all(bind=engine)
+    migrate_db()
 
 
 def migrate_db() -> None:
@@ -104,6 +106,9 @@ def migrate_db() -> None:
 
         if "pending_event_data" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN pending_event_data TEXT"))
+            conn.commit()
+        if "timezone" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN timezone TEXT"))
             conn.commit()
 
 

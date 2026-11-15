@@ -906,7 +906,14 @@ async def test_get_user_timezone_real_success() -> None:
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     assert user.google_credentials == '{"token": "refreshed"}'
+    assert user.timezone == "Europe/Moscow"
     db.close()
+
+    # Subsequent lookup must return the cached DB timezone without calling Google API
+    with patch("app.tools._build_calendar_service") as mock_build_second:
+        tz_cached = await _get_user_timezone(telegram_id)
+        mock_build_second.assert_not_called()
+    assert tz_cached == "Europe/Moscow"
 
 
 @pytest.mark.asyncio
@@ -966,6 +973,28 @@ async def test_run_agent_reuses_existing_session() -> None:
         mock_get.assert_called_once()
         mock_create.assert_not_called()
         assert result == "Hello there"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_clears_session_on_event_created() -> None:
+    from app.telegram_app import _run_agent
+
+    with (
+        patch(
+            "app.telegram_app.session_service.get_session", new_callable=AsyncMock
+        ) as mock_get,
+        patch(
+            "app.telegram_app.session_service.delete_session", new_callable=AsyncMock
+        ) as mock_delete,
+        patch("app.telegram_app.runner.run_async") as mock_run_async,
+    ):
+        mock_get.return_value = MagicMock()
+        mock_run_async.return_value = _async_gen([_make_final_event("✅ Event created!\nDetails")])
+
+        result = await _run_agent(556399, "Meeting tomorrow at 5pm")
+
+        assert "✅ Event created!" in result
+        mock_delete.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1069,6 +1098,13 @@ async def test_run_agent_timeout() -> None:
 async def test_handle_message_routes_to_agent() -> None:
     from app.telegram_app import handle_message
 
+    db = SessionLocal()
+    user = get_or_create_user(db, 556400)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = "primary"
+    db.commit()
+    db.close()
+
     message = AsyncMock()
     message.from_user.id = 556400
     message.text = "  Meeting tomorrow at 5pm  "
@@ -1095,8 +1131,53 @@ async def test_handle_message_routes_to_agent() -> None:
     args, _ = mock_run_agent.call_args
     assert args[0] == 556400
     assert "today=2026-06-25" in args[1]
+    assert "auth=ok" in args[1]
     assert "Meeting tomorrow at 5pm" in args[1]
     mock_send.assert_called_once_with(message, "Sure, I created that event.")
+
+
+@pytest.mark.asyncio
+async def test_handle_message_unauthenticated_short_circuits_llm() -> None:
+    from app.telegram_app import handle_message
+
+    message = AsyncMock()
+    message.from_user.id = 556410
+    message.text = "Meeting tomorrow at 5pm"
+    state = AsyncMock(spec=FSMContext)
+
+    with patch("app.telegram_app._run_agent", new_callable=AsyncMock) as mock_run_agent:
+        await handle_message(message, state)
+        mock_run_agent.assert_not_called()
+
+    message.answer.assert_called_once()
+    args, kwargs = message.answer.call_args
+    assert "connect your Google account" in args[0]
+    assert "reply_markup" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_handle_message_no_calendar_short_circuits_llm() -> None:
+    from app.telegram_app import handle_message
+
+    db = SessionLocal()
+    user = get_or_create_user(db, 556411)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = None
+    db.commit()
+    db.close()
+
+    message = AsyncMock()
+    message.from_user.id = 556411
+    message.text = "Meeting tomorrow at 5pm"
+    state = AsyncMock(spec=FSMContext)
+
+    with (
+        patch("app.telegram_app._run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("app.telegram_app._show_calendar_picker", new_callable=AsyncMock) as mock_picker,
+    ):
+        await handle_message(message, state)
+        mock_run_agent.assert_not_called()
+        mock_picker.assert_called_once_with(message, 556411, state)
 
 
 @pytest.mark.asyncio
@@ -1116,6 +1197,13 @@ async def test_handle_message_empty_text_is_noop() -> None:
 @pytest.mark.asyncio
 async def test_handle_message_agent_exception_shows_generic_error() -> None:
     from app.telegram_app import handle_message
+
+    db = SessionLocal()
+    user = get_or_create_user(db, 556402)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = "primary"
+    db.commit()
+    db.close()
 
     message = AsyncMock()
     message.from_user.id = 556402

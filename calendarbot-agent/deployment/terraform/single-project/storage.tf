@@ -20,6 +20,16 @@ resource "google_storage_bucket" "logs_data_bucket" {
   project                     = var.project_id
   uniform_bucket_level_access = true
 
+  lifecycle_rule {
+    condition {
+      age            = 30
+      matches_prefix = ["completions/"]
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
   depends_on = [resource.google_project_service.services]
 }
 

@@ -187,6 +187,7 @@ async def oauth2callback(request: Request):
             user = get_or_create_user(db, telegram_id)
             user.google_credentials = credentials_json
             user.default_calendar_id = "primary"
+            user.timezone = None
             db.commit()
 
         # Notify via Telegram bot

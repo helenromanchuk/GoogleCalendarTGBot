@@ -168,8 +168,9 @@ resource "google_bigquery_table" "genai_logs_table" {
   description         = "GenAI inference logs exported directly from Cloud Logging"
 
   time_partitioning {
-    type  = "DAY"
-    field = "timestamp"
+    type          = "DAY"
+    field         = "timestamp"
+    expiration_ms = 2592000000 # 30 days
   }
 
   # Cloud Logging BQ export schema (shared between cicd and single-project).

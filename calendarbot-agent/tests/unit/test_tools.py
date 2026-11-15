@@ -129,6 +129,19 @@ def test_create_calendar_event(mock_build_service: MagicMock) -> None:
     assert "2026-06-25T15:30:00" in kwargs["body"]["start"]["dateTime"]
     assert kwargs["body"]["start"]["timeZone"] == "Europe/Moscow"
     assert kwargs["body"]["end"]["timeZone"] == "Europe/Moscow"
+    mock_service.calendars.assert_called_once()
+
+    # Second call for the same user should use cached user.timezone without calling service.calendars()
+    mock_service.calendars.reset_mock()
+    res2 = create_calendar_event(
+        telegram_id=77777,
+        title="Second Event",
+        date="2026-06-26",
+        time="16:00",
+        tool_context=None,
+    )
+    assert res2["status"] == "success"
+    mock_service.calendars.assert_not_called()
 
 
 @patch("app.tools._build_calendar_service")

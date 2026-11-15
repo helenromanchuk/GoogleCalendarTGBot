@@ -30,7 +30,7 @@ USER appuser
 COPY --chown=appuser:appuser ./pyproject.toml ./README.md ./uv.lock* ./
 COPY --chown=appuser:appuser ./app ./app
 
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev
 
 ARG COMMIT_SHA=""
 ENV COMMIT_SHA=${COMMIT_SHA}
@@ -40,7 +40,4 @@ ENV AGENT_VERSION=${AGENT_VERSION}
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
-
-CMD ["uv", "run", "uvicorn", "app.fast_api_app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uv", "run", "--no-dev", "uvicorn", "app.fast_api_app:app", "--host", "0.0.0.0", "--port", "8080"]
