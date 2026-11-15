@@ -1955,6 +1955,12 @@ async def test_callback_calendar_selected_exception_falls_back_to_defaults() -> 
     from app.telegram_app import callback_calendar_selected
 
     telegram_id = 557100
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = '{"token": "old"}'
+        user.default_calendar_id = "old-calendar"
+        user.timezone = "Europe/Moscow"
+        db.commit()
     callback = AsyncMock()
     callback.from_user.id = telegram_id
     callback.data = "cal_0"
@@ -1972,7 +1978,19 @@ async def test_callback_calendar_selected_exception_falls_back_to_defaults() -> 
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     assert user.default_calendar_id == "cal-xyz"
+    assert user.timezone is None
     db.close()
+
+    # After the API recovers, the new calendar's timezone must be fetched.
+    from app.telegram_app import _get_user_timezone
+
+    service = MagicMock()
+    service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    with patch("app.tools._build_calendar_service", return_value=(service, '{"token": "old"}')):
+        assert await _get_user_timezone(telegram_id) == "America/Los_Angeles"
+    service.calendars.return_value.get.assert_called_once_with(calendarId="cal-xyz")
 
 
 # ── callback_conflict_add_anyway branches ─────────────────────────────────────

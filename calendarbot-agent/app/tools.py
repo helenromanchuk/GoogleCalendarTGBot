@@ -244,8 +244,8 @@ def create_calendar_event(
     telegram_id: int,
     title: str,
     date: str,
-    time: str | None,
-    tool_context: Any,
+    time: str | None = None,
+    tool_context: Any = None,
     location: str | None = None,
     description: str | None = None,
     bypass_conflict_check: bool = False,
@@ -261,7 +261,7 @@ def create_calendar_event(
         title: The event title or summary.
         date: Event date in YYYY-MM-DD format.
         time: Event start time in HH:MM format (24-hour). Ignored (may be
-            None) when all_day is True.
+            omitted or None) when all_day is True.
         location: Optional location/place of the event.
         description: Optional description/details of the event.
         bypass_conflict_check: If True, do not check for overlapping events.
@@ -297,10 +297,7 @@ def create_calendar_event(
                     user.google_credentials = updated_creds
                     db.commit()
 
-                if all_day:
-                    start_date = datetime.fromisoformat(date).date()
-                    end_date = start_date + timedelta(days=1)
-                else:
+                if not all_day or not bypass_conflict_check:
                     # Use cached timezone when available; otherwise fetch once and persist
                     if user.timezone:
                         timezone = user.timezone
@@ -317,6 +314,13 @@ def create_calendar_event(
                         except Exception:
                             timezone = "UTC"
 
+                if all_day:
+                    start_date = datetime.fromisoformat(date).date()
+                    end_date = start_date + timedelta(days=1)
+                else:
+                    if not time:
+                        return {"status": "error", "message": "A start time is required for timed events."}
+
                     from app.database import get_calendar_duration
 
                     duration = get_calendar_duration(db, telegram_id, user.default_calendar_id)
@@ -327,12 +331,18 @@ def create_calendar_event(
                 if not bypass_conflict_check:
                     try:
                         if all_day:
+                            import pytz
+
+                            tz = pytz.timezone(timezone)
+                            # Localize each midnight independently for DST changes.
+                            local_start = tz.localize(datetime.combine(start_date, datetime.min.time()))
+                            local_end = tz.localize(datetime.combine(end_date, datetime.min.time()))
                             events_result = (
                                 service.events()
                                 .list(
                                     calendarId=user.default_calendar_id,
-                                    timeMin=f"{start_date.isoformat()}T00:00:00Z",
-                                    timeMax=f"{end_date.isoformat()}T00:00:00Z",
+                                    timeMin=local_start.isoformat(),
+                                    timeMax=local_end.isoformat(),
                                     singleEvents=True,
                                 )
                                 .execute()

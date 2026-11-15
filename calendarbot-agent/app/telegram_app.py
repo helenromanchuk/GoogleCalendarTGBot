@@ -475,6 +475,7 @@ async def callback_calendar_selected(
         with session_scope() as db:
             user = get_or_create_user(db, telegram_id)
             user.default_calendar_id = chosen["id"]
+            user.timezone = None
             db.commit()
 
             if settings.testing and telegram_id == 12345:
@@ -962,13 +963,11 @@ async def callback_conflict_add_anyway(
     """Handle clicking 'Add anyway' button when there is a scheduling conflict."""
     telegram_id = callback.from_user.id
 
-    from app.database import get_pending_event, session_scope, set_pending_event
+    from app.database import consume_pending_event, session_scope
     from app.tools import create_calendar_event
 
     with session_scope() as db:
-        pending = get_pending_event(db, telegram_id)
-        if pending:
-            set_pending_event(db, telegram_id, None, commit=True)
+        pending = consume_pending_event(db, telegram_id)
     if not pending:
         await callback.answer("Error: no pending event found.")
         return

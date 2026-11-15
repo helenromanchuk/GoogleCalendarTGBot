@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import create_engine, text
 
 from app.database import SessionLocal, User, get_or_create_user, get_user, init_db
@@ -228,5 +229,81 @@ def test_migrate_db_adds_missing_column(tmp_path, monkeypatch) -> None:
             cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         assert "pending_event_data" in cols
         assert "timezone" in cols
+    finally:
+        temp_engine.dispose()
+
+
+def test_pending_event_is_consumed_once_under_concurrency(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from app.database import (
+        Base,
+        consume_pending_event,
+        get_pending_event,
+        set_pending_event,
+    )
+
+    temp_engine = create_engine(f"sqlite:///{tmp_path / 'claims.db'}")
+    Base.metadata.create_all(temp_engine)
+    both_read = Barrier(2)
+
+    class ConcurrentSession(Session):
+        def scalar(self, *args, **kwargs):
+            value = super().scalar(*args, **kwargs)
+            both_read.wait(timeout=10)
+            return value
+
+    sessions = sessionmaker(bind=temp_engine, class_=ConcurrentSession)
+    payload = {"title": "Private meeting", "date": "2026-06-25", "time": "20:00"}
+    try:
+        with Session(temp_engine) as db:
+            set_pending_event(db, 90210, payload, commit=True)
+            raw = db.execute(text("SELECT pending_event_data FROM users")).scalar_one()
+            assert "Private meeting" not in raw
+
+        def claim(_):
+            with sessions() as db:
+                return consume_pending_event(db, 90210)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(claim, range(2)))
+        assert results.count(payload) == 1
+        assert results.count(None) == 1
+        with Session(temp_engine) as db:
+            assert get_pending_event(db, 90210) is None
+            assert consume_pending_event(db, 90210) is None
+            assert consume_pending_event(db, 99999) is None
+    finally:
+        temp_engine.dispose()
+
+
+@pytest.mark.parametrize("legacy_schema", [False, True])
+def test_concurrent_initialization_serializes_schema_changes(tmp_path, monkeypatch, legacy_schema):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    import app.database as database_module
+
+    temp_engine = create_engine(f"sqlite:///{tmp_path / 'rollout.db'}")
+    try:
+        if legacy_schema:
+            with temp_engine.begin() as conn:
+                conn.execute(text("CREATE TABLE users (telegram_id INTEGER PRIMARY KEY)"))
+        monkeypatch.setattr(database_module, "engine", temp_engine)
+        start = Barrier(4)
+
+        def initialize(_):
+            start.wait(timeout=10)
+            database_module.init_db()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(initialize, range(4)))
+
+        with temp_engine.connect() as conn:
+            cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        assert {"pending_event_data", "timezone"} <= cols
     finally:
         temp_engine.dispose()

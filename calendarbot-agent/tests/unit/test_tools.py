@@ -155,6 +155,9 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
     mock_service.events.return_value.insert.return_value.execute.return_value = {
         "htmlLink": "https://event-link"
     }
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
 
     db = SessionLocal()
     user = get_or_create_user(db, 77790)
@@ -167,7 +170,6 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
         telegram_id=77790,
         title="Company Retreat",
         date="2026-06-25",
-        time=None,
         tool_context=None,
         all_day=True,
     )
@@ -180,8 +182,9 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
     assert "dateTime" not in body["start"]
     assert "timeZone" not in body["start"]
 
-    # Calendar metadata (timezone) should never be fetched for all-day events.
-    mock_service.calendars.assert_not_called()
+    query = mock_service.events.return_value.list.call_args.kwargs
+    assert query["timeMin"] == "2026-06-25T00:00:00-07:00"
+    assert query["timeMax"] == "2026-06-26T00:00:00-07:00"
 
 
 @patch("app.tools._build_calendar_service")
@@ -190,6 +193,9 @@ def test_create_calendar_event_all_day_conflict(mock_build_service: MagicMock) -
 
     mock_service = MagicMock()
     mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
     mock_service.events.return_value.list.return_value.execute.return_value = {
         "items": [{"summary": "Existing Whole-Day Event"}]
     }
@@ -222,6 +228,58 @@ def test_create_calendar_event_all_day_conflict(mock_build_service: MagicMock) -
     assert pending is not None
     assert pending["all_day"] is True
     db.close()
+
+
+@pytest.mark.parametrize(
+    ("date", "start", "end"),
+    [
+        ("2026-03-08", "2026-03-08T00:00:00-08:00", "2026-03-09T00:00:00-07:00"),
+        ("2026-11-01", "2026-11-01T00:00:00-07:00", "2026-11-02T00:00:00-08:00"),
+    ],
+)
+@patch("app.tools._build_calendar_service")
+def test_all_day_conflict_window_spans_local_day(mock_build_service, date, start, end):
+    from datetime import datetime
+
+    mock_service = MagicMock()
+    mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77792)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "test-calendar"
+        user.timezone = "America/Los_Angeles"
+        db.commit()
+
+    def overlapping_events(**kwargs):
+        # A late-evening event on the requested day must be in the API window.
+        evening = datetime.fromisoformat(f"{date}T20:00:00-07:00")
+        if datetime.fromisoformat(kwargs["timeMin"]) <= evening < datetime.fromisoformat(kwargs["timeMax"]):
+            return MagicMock(execute=lambda: {"items": [{"summary": "Evening meeting"}]})
+        return MagicMock(execute=lambda: {"items": []})
+
+    mock_service.events.return_value.list.side_effect = overlapping_events
+    result = create_calendar_event(77792, "Day off", date, all_day=True)
+
+    assert result["status"] == "conflict"
+    query = mock_service.events.return_value.list.call_args.kwargs
+    assert (query["timeMin"], query["timeMax"]) == (start, end)
+    mock_service.events.return_value.insert.assert_not_called()
+    mock_service.calendars.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_adk_all_day_call_can_omit_time():
+    from google.adk.tools import FunctionTool
+
+    tool = FunctionTool(create_calendar_event)
+    declaration = tool._get_declaration()
+    schema = declaration.parameters_json_schema
+    assert "time" not in schema["required"]
+    result = await tool.run_async(
+        args={"telegram_id": 12345, "title": "Day off", "date": "2026-06-25", "all_day": True},
+        tool_context=MagicMock(),
+    )
+    assert result["status"] == "success"
 
 
 @patch("app.tools._build_calendar_service")

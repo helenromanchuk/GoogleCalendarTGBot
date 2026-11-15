@@ -33,9 +33,22 @@ resource "google_cloud_run_v2_service" "app" {
         }
       }
 
-      volume_mounts {
-        name       = "sqlite-data"
-        mount_path = "/code/data"
+      dynamic "volume_mounts" {
+        for_each = var.cloud_sql_instance_connection_name == "" ? [] : [var.cloud_sql_instance_connection_name]
+        content {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+      }
+
+      env {
+        name = "DATABASE_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.database_url.secret_id
+            version = "latest"
+          }
+        }
       }
 
       env {
@@ -102,12 +115,13 @@ resource "google_cloud_run_v2_service" "app" {
     service_account = google_service_account.app_sa.email
     max_instance_request_concurrency = 8
 
-    volumes {
-      name = "sqlite-data"
-      gcs {
-        bucket        = google_storage_bucket.logs_data_bucket.name
-        read_only     = false
-        mount_options = ["only-dir=sqlite"]
+    dynamic "volumes" {
+      for_each = var.cloud_sql_instance_connection_name == "" ? [] : [var.cloud_sql_instance_connection_name]
+      content {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [volumes.value]
+        }
       }
     }
 
@@ -135,5 +149,7 @@ resource "google_cloud_run_v2_service" "app" {
   # Make dependencies conditional to avoid errors.
   depends_on = [
     resource.google_project_service.services,
+    google_secret_manager_secret_iam_member.database_url_accessor,
+    google_project_iam_member.cloud_sql_client,
   ]
 }
