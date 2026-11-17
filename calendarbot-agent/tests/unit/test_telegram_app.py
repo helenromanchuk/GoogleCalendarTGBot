@@ -882,14 +882,15 @@ async def test_get_user_timezone_not_authenticated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_user_timezone_real_success() -> None:
+@pytest.mark.parametrize("calendar_id", ["cal-1", "primary", None, ""])
+async def test_get_user_timezone_real_success(calendar_id) -> None:
     from app.telegram_app import _get_user_timezone
 
     telegram_id = 556201
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     user.google_credentials = '{"token": "old"}'
-    user.default_calendar_id = "cal-1"
+    user.default_calendar_id = calendar_id
     db.commit()
     db.close()
 
@@ -903,6 +904,9 @@ async def test_get_user_timezone_real_success() -> None:
         tz = await _get_user_timezone(telegram_id)
 
     assert tz == "Europe/Moscow"
+    mock_service.calendars.return_value.get.assert_called_once_with(
+        calendarId=calendar_id or "primary"
+    )
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     assert user.google_credentials == '{"token": "refreshed"}'
@@ -914,6 +918,70 @@ async def test_get_user_timezone_real_success() -> None:
         tz_cached = await _get_user_timezone(telegram_id)
         mock_build_second.assert_not_called()
     assert tz_cached == "Europe/Moscow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original_calendar_id", ["cal-1", None, ""])
+@pytest.mark.parametrize("new_timezone", [None, "Asia/Tokyo"])
+async def test_timezone_fetch_does_not_overwrite_switched_calendar_cache(
+    original_calendar_id, new_timezone
+) -> None:
+    from app.calendar_timezone import get_cached_timezone
+    from app.telegram_app import _get_user_timezone
+
+    telegram_id = 556204
+    credentials = '{"token": "old"}'
+    refreshed_credentials = '{"token": "refreshed"}'
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = credentials
+        user.default_calendar_id = original_calendar_id
+        db.commit()
+
+    def switch_calendar_during_fetch():
+        # A separate request commits a new selection while Google is responding.
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            user.default_calendar_id = "cal-2"
+            user.timezone = new_timezone
+            user.timezone_fetched_at = 1700000000 if new_timezone else None
+            db.commit()
+        return {"timeZone": "Europe/Moscow"}
+
+    service = MagicMock()
+    service.calendars.return_value.get.return_value.execute.side_effect = (
+        switch_calendar_during_fetch
+    )
+    with (
+        patch("app.calendar_timezone.time", return_value=1700000000),
+        patch(
+            "app.tools._build_calendar_service",
+            return_value=(service, refreshed_credentials),
+        ),
+    ):
+        assert await _get_user_timezone(telegram_id) == "Europe/Moscow"
+        service.calendars.return_value.get.assert_called_once_with(
+            calendarId=original_calendar_id or "primary"
+        )
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            assert user.default_calendar_id == "cal-2"
+            assert user.google_credentials == refreshed_credentials
+            assert user.timezone == new_timezone
+            assert user.timezone_fetched_at == (1700000000 if new_timezone else None)
+            assert get_cached_timezone(user) == new_timezone
+
+        # The next lookup must use cal-2's metadata or its existing fresh cache.
+        service.calendars.return_value.get.reset_mock()
+        service.calendars.return_value.get.return_value.execute.side_effect = None
+        service.calendars.return_value.get.return_value.execute.return_value = {
+            "timeZone": "Asia/Tokyo"
+        }
+        assert await _get_user_timezone(telegram_id) == "Asia/Tokyo"
+        if new_timezone:
+            service.calendars.return_value.get.assert_not_called()
+        else:
+            service.calendars.return_value.get.assert_called_once_with(calendarId="cal-2")
 
 
 @pytest.mark.asyncio

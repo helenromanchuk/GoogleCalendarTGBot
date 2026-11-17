@@ -23,7 +23,11 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types as genai_types
 
 from app.agent import app as adk_app
-from app.calendar_timezone import cache_timezone, get_cached_timezone
+from app.calendar_timezone import (
+    cache_timezone,
+    cache_timezone_if_calendar_matches,
+    get_cached_timezone,
+)
 from app.config import settings
 from app.database import get_or_create_user, get_user, session_scope
 
@@ -97,7 +101,7 @@ async def _get_user_timezone(telegram_id: int) -> str:
                 cal_id = user.default_calendar_id or "primary"
                 calendar_metadata = service.calendars().get(calendarId=cal_id).execute()
                 tz = calendar_metadata.get("timeZone", "UTC")
-                cache_timezone(user, tz)
+                cache_timezone_if_calendar_matches(db, telegram_id, cal_id, tz)
                 db.commit()
                 return tz
             except Exception:

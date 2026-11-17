@@ -2,6 +2,9 @@
 
 from time import time
 
+from sqlalchemy import func, update
+from sqlalchemy.orm import Session
+
 from app.database import User
 
 TIMEZONE_CACHE_TTL_SECONDS = 300
@@ -20,3 +23,19 @@ def cache_timezone(user: User, timezone: str) -> None:
     """Record a successful metadata lookup; the caller commits the transaction."""
     user.timezone = timezone
     user.timezone_fetched_at = int(time())
+
+
+def cache_timezone_if_calendar_matches(
+    db: Session, telegram_id: int, calendar_id: str, timezone: str
+) -> None:
+    """Atomically cache metadata only for the queried calendar; caller commits."""
+    db.execute(
+        update(User)
+        .where(
+            User.telegram_id == telegram_id,
+            func.coalesce(func.nullif(User.default_calendar_id, ""), "primary")
+            == calendar_id,
+        )
+        .values(timezone=timezone, timezone_fetched_at=int(time()))
+        .execution_options(synchronize_session=False)
+    )
