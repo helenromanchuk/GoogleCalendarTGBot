@@ -21,7 +21,10 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-from app.calendar_timezone import cache_timezone, get_cached_timezone
+from app.calendar_timezone import (
+    cache_timezone_if_calendar_matches,
+    get_cached_timezone,
+)
 from app.config import settings
 from app.database import get_or_create_user, get_user, session_scope
 
@@ -293,22 +296,24 @@ def create_calendar_event(
                         "message": "No default calendar selected. Please set one first.",
                     }
 
+                # Keep this event's calendar and metadata together across commits.
+                calendar_id = user.default_calendar_id
+                timezone = get_cached_timezone(user)
                 service, updated_creds = _build_calendar_service(user.google_credentials)
                 if updated_creds != user.google_credentials:
                     user.google_credentials = updated_creds
                     db.commit()
 
                 if not all_day or not bypass_conflict_check:
-                    timezone = get_cached_timezone(user)
                     if timezone is None:
                         try:
                             calendar_metadata = (
                                 service.calendars()
-                                .get(calendarId=user.default_calendar_id)
+                                .get(calendarId=calendar_id)
                                 .execute()
                             )
                             timezone = calendar_metadata.get("timeZone", "UTC")
-                            cache_timezone(user, timezone)
+                            cache_timezone_if_calendar_matches(db, telegram_id, calendar_id, timezone)
                             db.commit()
                         except Exception:
                             timezone = "UTC"
@@ -322,7 +327,7 @@ def create_calendar_event(
 
                     from app.database import get_calendar_duration
 
-                    duration = get_calendar_duration(db, telegram_id, user.default_calendar_id)
+                    duration = get_calendar_duration(db, telegram_id, calendar_id)
                     start_dt = datetime.fromisoformat(f"{date}T{time}:00")
                     end_dt = start_dt + timedelta(minutes=duration)
 
@@ -339,7 +344,7 @@ def create_calendar_event(
                             events_result = (
                                 service.events()
                                 .list(
-                                    calendarId=user.default_calendar_id,
+                                    calendarId=calendar_id,
                                     timeMin=local_start.isoformat(),
                                     timeMax=local_end.isoformat(),
                                     singleEvents=True,
@@ -357,7 +362,7 @@ def create_calendar_event(
                             events_result = (
                                 service.events()
                                 .list(
-                                    calendarId=user.default_calendar_id,
+                                    calendarId=calendar_id,
                                     timeMin=localized_start.isoformat(),
                                     timeMax=localized_end.isoformat(),
                                     singleEvents=True,
@@ -416,7 +421,7 @@ def create_calendar_event(
 
                 created = (
                     service.events()
-                    .insert(calendarId=user.default_calendar_id, body=event_body)
+                    .insert(calendarId=calendar_id, body=event_body)
                     .execute()
                 )
                 return {"status": "success", "event_url": created.get("htmlLink", "")}

@@ -182,6 +182,91 @@ def test_create_event_refreshes_stale_timezone(mock_build_service, fetched_at):
 
 
 @patch("app.tools._build_calendar_service")
+@pytest.mark.parametrize("switch_during", ["metadata", "credentials", "conflicts"])
+@pytest.mark.parametrize("all_day", [False, True])
+@pytest.mark.parametrize("new_timezone", [None, "Asia/Tokyo"])
+def test_create_event_keeps_calendar_timezone_pair_during_switch(
+    mock_build_service, switch_during, all_day, new_timezone
+):
+    from app.calendar_timezone import get_cached_timezone
+    from app.database import set_calendar_duration
+
+    telegram_id = 77794
+    credentials = '{"token": "test-token"}'
+    service = MagicMock()
+    service.events.return_value.list.return_value.execute.return_value = {"items": []}
+    service.events.return_value.insert.return_value.execute.return_value = {
+        "htmlLink": "https://event-link"
+    }
+    service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "Europe/Moscow"
+    }
+    mock_build_service.return_value = (service, credentials)
+
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = credentials
+        user.default_calendar_id = "calendar-a"
+        user.timezone = "Europe/Moscow" if switch_during == "credentials" else None
+        user.timezone_fetched_at = 1700000000 if user.timezone else None
+        db.commit()
+        set_calendar_duration(db, telegram_id, "calendar-a", 90)
+        set_calendar_duration(db, telegram_id, "calendar-b", 15)
+
+    def switch_calendar():
+        # A separate request changes the selection while a Google call is pending.
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            user.default_calendar_id = "calendar-b"
+            user.timezone = new_timezone
+            user.timezone_fetched_at = 1700000000 if new_timezone else None
+            db.commit()
+        if switch_during == "credentials":
+            return service, '{"token": "refreshed"}'
+        if switch_during == "metadata":
+            return {"timeZone": "Europe/Moscow"}
+        return {"items": []}
+
+    if switch_during == "credentials":
+        mock_build_service.side_effect = lambda _: switch_calendar()
+    elif switch_during == "metadata":
+        service.calendars.return_value.get.return_value.execute.side_effect = switch_calendar
+    else:
+        service.events.return_value.list.return_value.execute.side_effect = switch_calendar
+
+    with patch("app.calendar_timezone.time", return_value=1700000000):
+        result = create_calendar_event(
+            telegram_id, "Meeting", "2026-06-25", "15:30", all_day=all_day
+        )
+        assert result["status"] == "success"
+        insertion = service.events.return_value.insert.call_args.kwargs
+        assert insertion["calendarId"] == "calendar-a"
+        query = service.events.return_value.list.call_args.kwargs
+        assert query["calendarId"] == "calendar-a"
+        if all_day:
+            assert query["timeMin"] == "2026-06-25T00:00:00+03:00"
+            assert query["timeMax"] == "2026-06-26T00:00:00+03:00"
+            assert insertion["body"]["start"] == {"date": "2026-06-25"}
+        else:
+            assert query["timeMin"] == "2026-06-25T15:30:00+03:00"
+            assert query["timeMax"] == "2026-06-25T17:00:00+03:00"
+            assert insertion["body"]["start"]["timeZone"] == "Europe/Moscow"
+            assert insertion["body"]["end"] == {
+                "dateTime": "2026-06-25T17:00:00", "timeZone": "Europe/Moscow"
+            }
+        if switch_during == "credentials":
+            service.calendars.assert_not_called()
+        else:
+            service.calendars.return_value.get.assert_called_once_with(calendarId="calendar-a")
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            assert user.default_calendar_id == "calendar-b"
+            assert user.timezone == new_timezone
+            assert user.timezone_fetched_at == (1700000000 if new_timezone else None)
+            assert get_cached_timezone(user) == new_timezone
+
+
+@patch("app.tools._build_calendar_service")
 def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: MagicMock) -> None:
     """All-day events must be created with Google Calendar's 'date' fields, not
     'dateTime', so they render as a genuine all-day event rather than a timed
