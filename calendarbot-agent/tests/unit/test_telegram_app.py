@@ -394,6 +394,10 @@ async def test_callback_calendar_selected() -> None:
         "Default calendar set to: <b>Primary Calendar</b> (Time Zone: <code>Europe/Moscow</code>, Default Duration: <code>60 min</code>)"
         in args[0]
     )
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 888004)
+        assert user.timezone == "Europe/Moscow"
+        assert user.timezone_fetched_at is not None
 
 
 @pytest.mark.asyncio
@@ -433,6 +437,10 @@ async def test_cmd_status_connected() -> None:
     assert "Europe/Moscow" in args[0]
     assert "Default Duration" in args[0]
     assert "60 minutes" in args[0]
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 888005)
+        assert user.timezone == "Europe/Moscow"
+        assert user.timezone_fetched_at is not None
 
 
 @pytest.mark.asyncio
@@ -539,8 +547,8 @@ async def test_send_formatted_response_conflict_russian() -> None:
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999123
     with session_scope() as db:
@@ -579,7 +587,7 @@ async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock)
 
     callback.message.edit_reply_markup.assert_called_once_with(reply_markup=None)
     callback.message.answer.assert_called_once()
-    args, kwargs = callback.message.answer.call_args
+    args, _kwargs = callback.message.answer.call_args
     assert "✅ Event created!" in args[0]
     assert "Conflicting Party" in args[0]
     assert "https://calendar.google.com/event?id=123" in args[0]
@@ -591,8 +599,8 @@ async def test_callback_conflict_add_anyway_success(mock_chat_action: MagicMock)
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999124
     with session_scope() as db:
@@ -619,7 +627,7 @@ async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: Ma
 
     callback.message.edit_reply_markup.assert_called_once_with(reply_markup=None)
     callback.message.answer.assert_called_once()
-    args, kwargs = callback.message.answer.call_args
+    args, _kwargs = callback.message.answer.call_args
     assert "✅ Событие создано!" in args[0]
     assert "Встреча" in args[0]
     callback.answer.assert_called_once()
@@ -630,8 +638,8 @@ async def test_callback_conflict_add_anyway_russian_success(mock_chat_action: Ma
 @pytest.mark.asyncio
 @patch("app.telegram_app.bot.send_chat_action")
 async def test_callback_conflict_add_anyway_all_day_success(mock_chat_action: MagicMock) -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_add_anyway
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999128
     with session_scope() as db:
@@ -680,8 +688,8 @@ async def test_callback_conflict_add_anyway_all_day_success(mock_chat_action: Ma
 
 @pytest.mark.asyncio
 async def test_callback_conflict_add_anyway_no_pending() -> None:
-    from app.telegram_app import callback_conflict_add_anyway
     from app.database import session_scope, set_pending_event
+    from app.telegram_app import callback_conflict_add_anyway
 
     telegram_id = 999125
     with session_scope() as db:
@@ -698,8 +706,8 @@ async def test_callback_conflict_add_anyway_no_pending() -> None:
 
 @pytest.mark.asyncio
 async def test_callback_conflict_another_english() -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_another
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999126
     with session_scope() as db:
@@ -723,8 +731,8 @@ async def test_callback_conflict_another_english() -> None:
 
 @pytest.mark.asyncio
 async def test_callback_conflict_another_russian() -> None:
+    from app.database import get_pending_event, session_scope, set_pending_event
     from app.telegram_app import callback_conflict_another
-    from app.database import session_scope, set_pending_event, get_pending_event
 
     telegram_id = 999127
     with session_scope() as db:
@@ -748,8 +756,9 @@ async def test_callback_conflict_another_russian() -> None:
 
 @pytest.mark.asyncio
 async def test_show_calendar_picker_auth_error() -> None:
-    from app.telegram_app import _show_calendar_picker
     from google.auth.exceptions import RefreshError
+
+    from app.telegram_app import _show_calendar_picker
 
     telegram_id = 999333
     db = SessionLocal()
@@ -815,8 +824,9 @@ async def test_show_calendar_picker_http_error_auth() -> None:
 
 @pytest.mark.asyncio
 async def test_cmd_status_auth_error() -> None:
-    from app.telegram_app import cmd_status
     from google.auth.exceptions import RefreshError
+
+    from app.telegram_app import cmd_status
 
     telegram_id = 999334
     db = SessionLocal()
@@ -880,14 +890,15 @@ async def test_get_user_timezone_not_authenticated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_user_timezone_real_success() -> None:
+@pytest.mark.parametrize("calendar_id", ["cal-1", "primary", None, ""])
+async def test_get_user_timezone_real_success(calendar_id) -> None:
     from app.telegram_app import _get_user_timezone
 
     telegram_id = 556201
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     user.google_credentials = '{"token": "old"}'
-    user.default_calendar_id = "cal-1"
+    user.default_calendar_id = calendar_id
     db.commit()
     db.close()
 
@@ -901,10 +912,141 @@ async def test_get_user_timezone_real_success() -> None:
         tz = await _get_user_timezone(telegram_id)
 
     assert tz == "Europe/Moscow"
+    mock_service.calendars.return_value.get.assert_called_once_with(
+        calendarId=calendar_id or "primary"
+    )
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     assert user.google_credentials == '{"token": "refreshed"}'
+    assert user.timezone == "Europe/Moscow"
     db.close()
+
+    # Subsequent lookup must return the cached DB timezone without calling Google API
+    with patch("app.tools._build_calendar_service") as mock_build_second:
+        tz_cached = await _get_user_timezone(telegram_id)
+        mock_build_second.assert_not_called()
+    assert tz_cached == "Europe/Moscow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original_calendar_id", ["cal-1", None, ""])
+@pytest.mark.parametrize("new_timezone", [None, "Asia/Tokyo"])
+@pytest.mark.parametrize("handler", ["lookup", "status", "selection"])
+async def test_timezone_metadata_handlers_do_not_overwrite_switched_calendar_cache(
+    original_calendar_id, new_timezone, handler
+) -> None:
+    from app.calendar_timezone import get_cached_timezone
+    from app.telegram_app import (
+        _get_user_timezone,
+        callback_calendar_selected,
+        cmd_status,
+    )
+
+    telegram_id = 556204
+    credentials = '{"token": "old"}'
+    refreshed_credentials = '{"token": "refreshed"}'
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = credentials
+        user.default_calendar_id = original_calendar_id
+        db.commit()
+
+    def switch_calendar_during_fetch():
+        # A separate request commits a new selection while Google is responding.
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            user.default_calendar_id = "cal-2"
+            user.timezone = new_timezone
+            user.timezone_fetched_at = 1700000000 if new_timezone else None
+            db.commit()
+        return {"timeZone": "Europe/Moscow"}
+
+    service = MagicMock()
+    service.calendars.return_value.get.return_value.execute.side_effect = (
+        switch_calendar_during_fetch
+    )
+    with (
+        patch("app.calendar_timezone.time", return_value=1700000000),
+        patch(
+            "app.tools._build_calendar_service",
+            return_value=(service, refreshed_credentials),
+        ),
+    ):
+        if handler == "lookup":
+            assert await _get_user_timezone(telegram_id) == "Europe/Moscow"
+        elif handler == "status":
+            message = AsyncMock()
+            message.from_user.id = telegram_id
+            await cmd_status(message)
+            message.answer.assert_awaited_once()
+        else:
+            callback = AsyncMock()
+            callback.from_user.id = telegram_id
+            callback.data = "cal_0"
+            state = AsyncMock(spec=FSMContext)
+            state.get_data.return_value = {
+                "calendars": [{"id": original_calendar_id or "primary", "name": "Original Calendar"}]
+            }
+            await callback_calendar_selected(callback, state)
+            state.clear.assert_awaited_once()
+            callback.message.edit_text.assert_awaited_once()
+        service.calendars.return_value.get.assert_called_once_with(
+            calendarId=original_calendar_id or "primary"
+        )
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            assert user.default_calendar_id == "cal-2"
+            assert user.google_credentials == refreshed_credentials
+            assert user.timezone == new_timezone
+            assert user.timezone_fetched_at == (1700000000 if new_timezone else None)
+            assert get_cached_timezone(user) == new_timezone
+
+        # The next lookup must use cal-2's metadata or its existing fresh cache.
+        service.calendars.return_value.get.reset_mock()
+        service.calendars.return_value.get.return_value.execute.side_effect = None
+        service.calendars.return_value.get.return_value.execute.return_value = {
+            "timeZone": "Asia/Tokyo"
+        }
+        assert await _get_user_timezone(telegram_id) == "Asia/Tokyo"
+        if new_timezone:
+            service.calendars.return_value.get.assert_not_called()
+        else:
+            service.calendars.return_value.get.assert_called_once_with(calendarId="cal-2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetched_at", [None, 1700000000 - 300])
+async def test_user_today_refreshes_stale_calendar_timezone(fetched_at) -> None:
+    from datetime import UTC, datetime
+
+    from app.telegram_app import _get_user_today_str
+
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 556203)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "cal-1"
+        user.timezone = "Europe/Moscow"
+        user.timezone_fetched_at = fetched_at
+        db.commit()
+
+    mock_service = MagicMock()
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    instant = datetime(2026, 6, 25, 1, tzinfo=UTC)
+    with (
+        patch("app.calendar_timezone.time", return_value=1700000000),
+        patch("app.tools._build_calendar_service", return_value=(mock_service, '{"token": "test-token"}')),
+        patch("app.telegram_app.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.side_effect = lambda tz: instant.astimezone(tz)
+        assert await _get_user_today_str(556203) == "2026-06-24"
+
+    mock_service.calendars.return_value.get.assert_called_once_with(calendarId="cal-1")
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 556203)
+        assert user.timezone == "America/Los_Angeles"
+        assert user.timezone_fetched_at == 1700000000
 
 
 @pytest.mark.asyncio
@@ -964,6 +1106,28 @@ async def test_run_agent_reuses_existing_session() -> None:
         mock_get.assert_called_once()
         mock_create.assert_not_called()
         assert result == "Hello there"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_clears_session_on_event_created() -> None:
+    from app.telegram_app import _run_agent
+
+    with (
+        patch(
+            "app.telegram_app.session_service.get_session", new_callable=AsyncMock
+        ) as mock_get,
+        patch(
+            "app.telegram_app.session_service.delete_session", new_callable=AsyncMock
+        ) as mock_delete,
+        patch("app.telegram_app.runner.run_async") as mock_run_async,
+    ):
+        mock_get.return_value = MagicMock()
+        mock_run_async.return_value = _async_gen([_make_final_event("✅ Event created!\nDetails")])
+
+        result = await _run_agent(556399, "Meeting tomorrow at 5pm")
+
+        assert "✅ Event created!" in result
+        mock_delete.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1043,7 +1207,7 @@ async def test_run_agent_timeout() -> None:
 
     def _raise_timeout(coro, timeout=None):
         coro.close()  # Avoid an unawaited-coroutine warning since the mock never runs it.
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     with (
         patch(
@@ -1066,6 +1230,13 @@ async def test_run_agent_timeout() -> None:
 @pytest.mark.asyncio
 async def test_handle_message_routes_to_agent() -> None:
     from app.telegram_app import handle_message
+
+    db = SessionLocal()
+    user = get_or_create_user(db, 556400)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = "primary"
+    db.commit()
+    db.close()
 
     message = AsyncMock()
     message.from_user.id = 556400
@@ -1093,8 +1264,53 @@ async def test_handle_message_routes_to_agent() -> None:
     args, _ = mock_run_agent.call_args
     assert args[0] == 556400
     assert "today=2026-06-25" in args[1]
+    assert "auth=ok" in args[1]
     assert "Meeting tomorrow at 5pm" in args[1]
     mock_send.assert_called_once_with(message, "Sure, I created that event.")
+
+
+@pytest.mark.asyncio
+async def test_handle_message_unauthenticated_short_circuits_llm() -> None:
+    from app.telegram_app import handle_message
+
+    message = AsyncMock()
+    message.from_user.id = 556410
+    message.text = "Meeting tomorrow at 5pm"
+    state = AsyncMock(spec=FSMContext)
+
+    with patch("app.telegram_app._run_agent", new_callable=AsyncMock) as mock_run_agent:
+        await handle_message(message, state)
+        mock_run_agent.assert_not_called()
+
+    message.answer.assert_called_once()
+    args, kwargs = message.answer.call_args
+    assert "connect your Google account" in args[0]
+    assert "reply_markup" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_handle_message_no_calendar_short_circuits_llm() -> None:
+    from app.telegram_app import handle_message
+
+    db = SessionLocal()
+    user = get_or_create_user(db, 556411)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = None
+    db.commit()
+    db.close()
+
+    message = AsyncMock()
+    message.from_user.id = 556411
+    message.text = "Meeting tomorrow at 5pm"
+    state = AsyncMock(spec=FSMContext)
+
+    with (
+        patch("app.telegram_app._run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("app.telegram_app._show_calendar_picker", new_callable=AsyncMock) as mock_picker,
+    ):
+        await handle_message(message, state)
+        mock_run_agent.assert_not_called()
+        mock_picker.assert_called_once_with(message, 556411, state)
 
 
 @pytest.mark.asyncio
@@ -1114,6 +1330,13 @@ async def test_handle_message_empty_text_is_noop() -> None:
 @pytest.mark.asyncio
 async def test_handle_message_agent_exception_shows_generic_error() -> None:
     from app.telegram_app import handle_message
+
+    db = SessionLocal()
+    user = get_or_create_user(db, 556402)
+    user.google_credentials = '{"token": "test-token"}'
+    user.default_calendar_id = "primary"
+    db.commit()
+    db.close()
 
     message = AsyncMock()
     message.from_user.id = 556402
@@ -1865,6 +2088,12 @@ async def test_callback_calendar_selected_exception_falls_back_to_defaults() -> 
     from app.telegram_app import callback_calendar_selected
 
     telegram_id = 557100
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = '{"token": "old"}'
+        user.default_calendar_id = "old-calendar"
+        user.timezone = "Europe/Moscow"
+        db.commit()
     callback = AsyncMock()
     callback.from_user.id = telegram_id
     callback.data = "cal_0"
@@ -1882,7 +2111,19 @@ async def test_callback_calendar_selected_exception_falls_back_to_defaults() -> 
     db = SessionLocal()
     user = get_or_create_user(db, telegram_id)
     assert user.default_calendar_id == "cal-xyz"
+    assert user.timezone is None
     db.close()
+
+    # After the API recovers, the new calendar's timezone must be fetched.
+    from app.telegram_app import _get_user_timezone
+
+    service = MagicMock()
+    service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    with patch("app.tools._build_calendar_service", return_value=(service, '{"token": "old"}')):
+        assert await _get_user_timezone(telegram_id) == "America/Los_Angeles"
+    service.calendars.return_value.get.assert_called_once_with(calendarId="cal-xyz")
 
 
 # ── callback_conflict_add_anyway branches ─────────────────────────────────────

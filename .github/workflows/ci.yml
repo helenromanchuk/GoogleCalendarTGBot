@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: calendarbot-agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "calendarbot-agent/uv.lock"
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run --with "ruff>=0.4.6" ruff check app tests
+
+      # Unit tests only: tests/integration needs a live Gemini API key and
+      # a bootable server; tests/unit is self-contained (conftest.py injects
+      # all required env vars and an in-memory SQLite).
+      - name: Unit tests
+        run: uv run pytest tests/unit

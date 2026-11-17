@@ -124,12 +124,33 @@ calendarbot-agent/
 | `ENCRYPTION_KEY` | Fernet key for token encryption at rest |
 | `WEBHOOK_SECRET` | Telegram webhook secret token. Required in production (see below) — if unset, a random value is generated per process, which breaks webhook validation once the service scales beyond one instance |
 | `BASE_URL` | Public URL of this service (for webhook + OAuth redirect) |
-| `DATABASE_URL` | SQLite (default: `sqlite:///./data/calendar_bot.db`) or PostgreSQL (`postgresql://user:pass@host:5432/db`) |
+| `DATABASE_URL` | SQLite for local development (default: `sqlite:///./data/calendar_bot.db`); PostgreSQL required on Cloud Run (`postgresql://user:pass@host:5432/db`) |
 | `REDIS_URL` | Redis connection URL |
 | `GOOGLE_CLOUD_PROJECT` | GCP project ID (for Vertex AI in production) |
 | `GOOGLE_GENAI_USE_VERTEXAI` | `True` for production (Vertex AI), `False` for dev |
 
 ## Deployment to Cloud Run
+
+All instances share PostgreSQL for encrypted credentials, pending confirmations,
+preferences, and ADK sessions. Terraform reads `DATABASE_URL` from the
+`${project_name}-database-url` Secret Manager secret. Add a secret version with
+the connection URL before deploying the application, just as for the bot token
+and encryption key. The database must already exist and be reachable by Cloud Run.
+Cloud Run startup rejects SQLite; never put SQLite files on a Cloud Storage mount.
+
+For an existing Cloud SQL PostgreSQL instance, set Terraform variable
+`cloud_sql_instance_connection_name` to `PROJECT:REGION:INSTANCE`. Terraform mounts
+the connection socket at `/cloudsql` and grants the runtime service account
+`roles/cloudsql.client`. Set the secret URL to
+`postgresql://USER:PASSWORD@/DATABASE?host=/cloudsql/PROJECT:REGION:INSTANCE`
+(URL-encode the username/password). Both database drivers use this socket.
+The Terraform configuration attaches an existing instance; it does not create one.
+
+Before switching an existing deployment, stop writes and back up/export the old
+SQLite database. Import its user, preference, and ADK session data into PostgreSQL
+using a migration tool that supports both databases, keeping the same
+`ENCRYPTION_KEY` to decrypt existing credentials. Verify the imported data before
+switching traffic. Removing the FUSE mount does not delete its bucket objects.
 
 ```bash
 # Add deployment configuration

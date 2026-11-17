@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.calendar_timezone import cache_timezone
 from app.database import SessionLocal, get_or_create_user, init_db
 from app.tools import (
     create_calendar_event,
@@ -129,6 +130,140 @@ def test_create_calendar_event(mock_build_service: MagicMock) -> None:
     assert "2026-06-25T15:30:00" in kwargs["body"]["start"]["dateTime"]
     assert kwargs["body"]["start"]["timeZone"] == "Europe/Moscow"
     assert kwargs["body"]["end"]["timeZone"] == "Europe/Moscow"
+    mock_service.calendars.assert_called_once()
+
+    # Second call for the same user should use cached user.timezone without calling service.calendars()
+    mock_service.calendars.reset_mock()
+    res2 = create_calendar_event(
+        telegram_id=77777,
+        title="Second Event",
+        date="2026-06-26",
+        time="16:00",
+        tool_context=None,
+    )
+    assert res2["status"] == "success"
+    mock_service.calendars.assert_not_called()
+
+
+@pytest.mark.parametrize("fetched_at", [None, 1700000000 - 300])
+@patch("app.tools._build_calendar_service")
+def test_create_event_refreshes_stale_timezone(mock_build_service, fetched_at):
+    mock_service = MagicMock()
+    mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
+    mock_service.events.return_value.insert.return_value.execute.return_value = {
+        "htmlLink": "https://event-link"
+    }
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77793)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "test-calendar"
+        user.timezone = "Europe/Moscow"
+        user.timezone_fetched_at = fetched_at
+        db.commit()
+
+    with patch("app.calendar_timezone.time", return_value=1700000000):
+        result = create_calendar_event(
+            77793, "Meeting", "2026-06-25", "15:30", bypass_conflict_check=True
+        )
+
+    assert result["status"] == "success"
+    body = mock_service.events.return_value.insert.call_args.kwargs["body"]
+    assert body["start"] == {
+        "dateTime": "2026-06-25T15:30:00",
+        "timeZone": "America/Los_Angeles",
+    }
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77793)
+        assert user.timezone == "America/Los_Angeles"
+        assert user.timezone_fetched_at == 1700000000
+
+
+@patch("app.tools._build_calendar_service")
+@pytest.mark.parametrize("switch_during", ["metadata", "credentials", "conflicts"])
+@pytest.mark.parametrize("all_day", [False, True])
+@pytest.mark.parametrize("new_timezone", [None, "Asia/Tokyo"])
+def test_create_event_keeps_calendar_timezone_pair_during_switch(
+    mock_build_service, switch_during, all_day, new_timezone
+):
+    from app.calendar_timezone import get_cached_timezone
+    from app.database import set_calendar_duration
+
+    telegram_id = 77794
+    credentials = '{"token": "test-token"}'
+    service = MagicMock()
+    service.events.return_value.list.return_value.execute.return_value = {"items": []}
+    service.events.return_value.insert.return_value.execute.return_value = {
+        "htmlLink": "https://event-link"
+    }
+    service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "Europe/Moscow"
+    }
+    mock_build_service.return_value = (service, credentials)
+
+    with SessionLocal() as db:
+        user = get_or_create_user(db, telegram_id)
+        user.google_credentials = credentials
+        user.default_calendar_id = "calendar-a"
+        user.timezone = "Europe/Moscow" if switch_during == "credentials" else None
+        user.timezone_fetched_at = 1700000000 if user.timezone else None
+        db.commit()
+        set_calendar_duration(db, telegram_id, "calendar-a", 90)
+        set_calendar_duration(db, telegram_id, "calendar-b", 15)
+
+    def switch_calendar():
+        # A separate request changes the selection while a Google call is pending.
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            user.default_calendar_id = "calendar-b"
+            user.timezone = new_timezone
+            user.timezone_fetched_at = 1700000000 if new_timezone else None
+            db.commit()
+        if switch_during == "credentials":
+            return service, '{"token": "refreshed"}'
+        if switch_during == "metadata":
+            return {"timeZone": "Europe/Moscow"}
+        return {"items": []}
+
+    if switch_during == "credentials":
+        mock_build_service.side_effect = lambda _: switch_calendar()
+    elif switch_during == "metadata":
+        service.calendars.return_value.get.return_value.execute.side_effect = switch_calendar
+    else:
+        service.events.return_value.list.return_value.execute.side_effect = switch_calendar
+
+    with patch("app.calendar_timezone.time", return_value=1700000000):
+        result = create_calendar_event(
+            telegram_id, "Meeting", "2026-06-25", "15:30", all_day=all_day
+        )
+        assert result["status"] == "success"
+        insertion = service.events.return_value.insert.call_args.kwargs
+        assert insertion["calendarId"] == "calendar-a"
+        query = service.events.return_value.list.call_args.kwargs
+        assert query["calendarId"] == "calendar-a"
+        if all_day:
+            assert query["timeMin"] == "2026-06-25T00:00:00+03:00"
+            assert query["timeMax"] == "2026-06-26T00:00:00+03:00"
+            assert insertion["body"]["start"] == {"date": "2026-06-25"}
+        else:
+            assert query["timeMin"] == "2026-06-25T15:30:00+03:00"
+            assert query["timeMax"] == "2026-06-25T17:00:00+03:00"
+            assert insertion["body"]["start"]["timeZone"] == "Europe/Moscow"
+            assert insertion["body"]["end"] == {
+                "dateTime": "2026-06-25T17:00:00", "timeZone": "Europe/Moscow"
+            }
+        if switch_during == "credentials":
+            service.calendars.assert_not_called()
+        else:
+            service.calendars.return_value.get.assert_called_once_with(calendarId="calendar-a")
+        with SessionLocal() as db:
+            user = get_or_create_user(db, telegram_id)
+            assert user.default_calendar_id == "calendar-b"
+            assert user.timezone == new_timezone
+            assert user.timezone_fetched_at == (1700000000 if new_timezone else None)
+            assert get_cached_timezone(user) == new_timezone
 
 
 @patch("app.tools._build_calendar_service")
@@ -142,6 +277,9 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
     mock_service.events.return_value.insert.return_value.execute.return_value = {
         "htmlLink": "https://event-link"
     }
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
 
     db = SessionLocal()
     user = get_or_create_user(db, 77790)
@@ -154,7 +292,6 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
         telegram_id=77790,
         title="Company Retreat",
         date="2026-06-25",
-        time=None,
         tool_context=None,
         all_day=True,
     )
@@ -167,8 +304,9 @@ def test_create_calendar_event_all_day_uses_date_fields(mock_build_service: Magi
     assert "dateTime" not in body["start"]
     assert "timeZone" not in body["start"]
 
-    # Calendar metadata (timezone) should never be fetched for all-day events.
-    mock_service.calendars.assert_not_called()
+    query = mock_service.events.return_value.list.call_args.kwargs
+    assert query["timeMin"] == "2026-06-25T00:00:00-07:00"
+    assert query["timeMax"] == "2026-06-26T00:00:00-07:00"
 
 
 @patch("app.tools._build_calendar_service")
@@ -177,6 +315,9 @@ def test_create_calendar_event_all_day_conflict(mock_build_service: MagicMock) -
 
     mock_service = MagicMock()
     mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    mock_service.calendars.return_value.get.return_value.execute.return_value = {
+        "timeZone": "America/Los_Angeles"
+    }
     mock_service.events.return_value.list.return_value.execute.return_value = {
         "items": [{"summary": "Existing Whole-Day Event"}]
     }
@@ -211,9 +352,61 @@ def test_create_calendar_event_all_day_conflict(mock_build_service: MagicMock) -
     db.close()
 
 
+@pytest.mark.parametrize(
+    ("date", "start", "end"),
+    [
+        ("2026-03-08", "2026-03-08T00:00:00-08:00", "2026-03-09T00:00:00-07:00"),
+        ("2026-11-01", "2026-11-01T00:00:00-07:00", "2026-11-02T00:00:00-08:00"),
+    ],
+)
+@patch("app.tools._build_calendar_service")
+def test_all_day_conflict_window_spans_local_day(mock_build_service, date, start, end):
+    from datetime import datetime
+
+    mock_service = MagicMock()
+    mock_build_service.return_value = (mock_service, '{"token": "test-token"}')
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 77792)
+        user.google_credentials = '{"token": "test-token"}'
+        user.default_calendar_id = "test-calendar"
+        cache_timezone(user, "America/Los_Angeles")
+        db.commit()
+
+    def overlapping_events(**kwargs):
+        # A late-evening event on the requested day must be in the API window.
+        evening = datetime.fromisoformat(f"{date}T20:00:00-07:00")
+        if datetime.fromisoformat(kwargs["timeMin"]) <= evening < datetime.fromisoformat(kwargs["timeMax"]):
+            return MagicMock(execute=lambda: {"items": [{"summary": "Evening meeting"}]})
+        return MagicMock(execute=lambda: {"items": []})
+
+    mock_service.events.return_value.list.side_effect = overlapping_events
+    result = create_calendar_event(77792, "Day off", date, all_day=True)
+
+    assert result["status"] == "conflict"
+    query = mock_service.events.return_value.list.call_args.kwargs
+    assert (query["timeMin"], query["timeMax"]) == (start, end)
+    mock_service.events.return_value.insert.assert_not_called()
+    mock_service.calendars.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_adk_all_day_call_can_omit_time():
+    from google.adk.tools import FunctionTool
+
+    tool = FunctionTool(create_calendar_event)
+    declaration = tool._get_declaration()
+    schema = declaration.parameters_json_schema
+    assert "time" not in schema["required"]
+    result = await tool.run_async(
+        args={"telegram_id": 12345, "title": "Day off", "date": "2026-06-25", "all_day": True},
+        tool_context=MagicMock(),
+    )
+    assert result["status"] == "success"
+
+
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
-    from app.database import set_pending_event, get_pending_event
+    from app.database import get_pending_event, set_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -276,7 +469,7 @@ def test_create_calendar_event_conflict(mock_build_service: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_create_calendar_event_conflict_bypass(mock_build_service: MagicMock) -> None:
-    from app.database import set_pending_event, get_pending_event
+    from app.database import get_pending_event, set_pending_event
 
     # Prepare mocked calendar service
     mock_service = MagicMock()
@@ -371,8 +564,9 @@ def test_create_calendar_event_refresh_error(mock_build: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_get_user_calendars_refresh_error(mock_build: MagicMock) -> None:
-    from app.tools import get_user_calendars
     from google.auth.exceptions import RefreshError
+
+    from app.tools import get_user_calendars
     mock_build.side_effect = RefreshError("revoked")
 
     db = SessionLocal()
@@ -396,8 +590,9 @@ def test_get_user_calendars_refresh_error(mock_build: MagicMock) -> None:
 
 @patch("app.tools._build_calendar_service")
 def test_get_upcoming_events_refresh_error(mock_build: MagicMock) -> None:
-    from app.tools import get_upcoming_events
     from google.auth.exceptions import RefreshError
+
+    from app.tools import get_upcoming_events
     mock_build.side_effect = RefreshError("revoked")
 
     db = SessionLocal()

@@ -32,10 +32,12 @@ class Settings:
     # Base URL for OAuth callback (e.g. https://my-service.run.app)
     base_url: str = os.environ.get("BASE_URL", "http://localhost:8080")
 
-    # SQLite database path
+    # SQLite for local development; shared PostgreSQL is required on Cloud Run.
     database_url: str = os.environ.get(
         "DATABASE_URL", "sqlite:///./data/calendar_bot.db"
     )
+    if os.environ.get("K_SERVICE") and not database_url.startswith(("postgresql://", "postgresql+psycopg2://")):
+        raise ValueError("Cloud Run requires a PostgreSQL DATABASE_URL for shared persistence.")
 
     # Redis URL for OAuth CSRF state storage
     redis_url: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")

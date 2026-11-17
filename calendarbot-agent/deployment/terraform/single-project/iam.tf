@@ -32,6 +32,14 @@ resource "google_project_iam_member" "default_compute_sa_storage_object_creator"
   depends_on = [resource.google_project_service.services]
 }
 
+# Optional connection to an existing Cloud SQL instance.
+resource "google_project_iam_member" "cloud_sql_client" {
+  count   = var.cloud_sql_instance_connection_name == "" ? 0 : 1
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
 # Agent service account
 resource "google_service_account" "app_sa" {
   account_id   = "${var.project_name}-app"

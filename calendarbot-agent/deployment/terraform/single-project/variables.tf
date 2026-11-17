@@ -29,6 +29,12 @@ variable "region" {
   default     = "us-east1"
 }
 
+variable "cloud_sql_instance_connection_name" {
+  type        = string
+  description = "Optional existing Cloud SQL PostgreSQL instance (PROJECT:REGION:INSTANCE), mounted at /cloudsql. Set DATABASE_URL in Secret Manager to use its Unix socket."
+  default     = ""
+}
+
 variable "telemetry_logs_filter" {
   type        = string
   description = "Log Sink filter for capturing telemetry data. Captures logs with the `traceloop.association.properties.log_type` attribute set to `tracing`."

@@ -64,7 +64,7 @@ def test_oauth_callback_csrf_valid() -> None:
 
     with (
         patch("google_auth_oauthlib.flow.Flow.from_client_config") as mock_flow_class,
-        patch("app.telegram_app.bot.send_message") as mock_send_message,
+        patch("app.telegram_app.bot.send_message"),
     ):
         mock_flow = MagicMock()
         mock_flow_class.return_value = mock_flow

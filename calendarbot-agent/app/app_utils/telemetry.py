@@ -15,6 +15,7 @@
 import logging
 import os
 
+
 def setup_telemetry() -> str | None:
     """Configure OpenTelemetry and GenAI telemetry.
 

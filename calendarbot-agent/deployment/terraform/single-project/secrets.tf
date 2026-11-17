@@ -12,6 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+resource "google_secret_manager_secret" "database_url" {
+  secret_id = "${var.project_name}-database-url"
+  project   = var.project_id
+  replication {
+    auto {}
+  }
+  depends_on = [resource.google_project_service.services]
+}
+
+resource "google_secret_manager_secret_iam_member" "database_url_accessor" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.database_url.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
 resource "google_secret_manager_secret" "bot_token" {
   secret_id = "${var.project_name}-bot-token"
   project   = var.project_id

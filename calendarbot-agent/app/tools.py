@@ -21,8 +21,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
+from app.calendar_timezone import (
+    cache_timezone_if_calendar_matches,
+    get_cached_timezone,
+)
 from app.config import settings
-from app.database import SessionLocal, get_or_create_user, get_user, session_scope
+from app.database import get_or_create_user, get_user, session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +199,7 @@ def get_user_calendars(telegram_id: int, tool_context: Any) -> dict:
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",
@@ -225,6 +230,8 @@ def set_default_calendar(telegram_id: int, calendar_id: str, tool_context: Any) 
     with session_scope() as db:
         try:
             user = get_or_create_user(db, telegram_id)
+            if user.default_calendar_id != calendar_id:
+                user.timezone = None
             user.default_calendar_id = calendar_id
             db.commit()
             return {"status": "success"}
@@ -241,8 +248,8 @@ def create_calendar_event(
     telegram_id: int,
     title: str,
     date: str,
-    time: str | None,
-    tool_context: Any,
+    time: str | None = None,
+    tool_context: Any = None,
     location: str | None = None,
     description: str | None = None,
     bypass_conflict_check: bool = False,
@@ -258,7 +265,7 @@ def create_calendar_event(
         title: The event title or summary.
         date: Event date in YYYY-MM-DD format.
         time: Event start time in HH:MM format (24-hour). Ignored (may be
-            None) when all_day is True.
+            omitted or None) when all_day is True.
         location: Optional location/place of the event.
         description: Optional description/details of the event.
         bypass_conflict_check: If True, do not check for overlapping events.
@@ -289,29 +296,38 @@ def create_calendar_event(
                         "message": "No default calendar selected. Please set one first.",
                     }
 
+                # Keep this event's calendar and metadata together across commits.
+                calendar_id = user.default_calendar_id
+                timezone = get_cached_timezone(user)
                 service, updated_creds = _build_calendar_service(user.google_credentials)
                 if updated_creds != user.google_credentials:
                     user.google_credentials = updated_creds
                     db.commit()
 
+                if not all_day or not bypass_conflict_check:
+                    if timezone is None:
+                        try:
+                            calendar_metadata = (
+                                service.calendars()
+                                .get(calendarId=calendar_id)
+                                .execute()
+                            )
+                            timezone = calendar_metadata.get("timeZone", "UTC")
+                            cache_timezone_if_calendar_matches(db, telegram_id, calendar_id, timezone)
+                            db.commit()
+                        except Exception:
+                            timezone = "UTC"
+
                 if all_day:
                     start_date = datetime.fromisoformat(date).date()
                     end_date = start_date + timedelta(days=1)
                 else:
-                    # Fetch the timezone of the chosen calendar
-                    try:
-                        calendar_metadata = (
-                            service.calendars()
-                            .get(calendarId=user.default_calendar_id)
-                            .execute()
-                        )
-                        timezone = calendar_metadata.get("timeZone", "UTC")
-                    except Exception:
-                        timezone = "UTC"
+                    if not time:
+                        return {"status": "error", "message": "A start time is required for timed events."}
 
                     from app.database import get_calendar_duration
 
-                    duration = get_calendar_duration(db, telegram_id, user.default_calendar_id)
+                    duration = get_calendar_duration(db, telegram_id, calendar_id)
                     start_dt = datetime.fromisoformat(f"{date}T{time}:00")
                     end_dt = start_dt + timedelta(minutes=duration)
 
@@ -319,12 +335,18 @@ def create_calendar_event(
                 if not bypass_conflict_check:
                     try:
                         if all_day:
+                            import pytz
+
+                            tz = pytz.timezone(timezone)
+                            # Localize each midnight independently for DST changes.
+                            local_start = tz.localize(datetime.combine(start_date, datetime.min.time()))
+                            local_end = tz.localize(datetime.combine(end_date, datetime.min.time()))
                             events_result = (
                                 service.events()
                                 .list(
-                                    calendarId=user.default_calendar_id,
-                                    timeMin=f"{start_date.isoformat()}T00:00:00Z",
-                                    timeMax=f"{end_date.isoformat()}T00:00:00Z",
+                                    calendarId=calendar_id,
+                                    timeMin=local_start.isoformat(),
+                                    timeMax=local_end.isoformat(),
                                     singleEvents=True,
                                 )
                                 .execute()
@@ -340,7 +362,7 @@ def create_calendar_event(
                             events_result = (
                                 service.events()
                                 .list(
-                                    calendarId=user.default_calendar_id,
+                                    calendarId=calendar_id,
                                     timeMin=localized_start.isoformat(),
                                     timeMax=localized_end.isoformat(),
                                     singleEvents=True,
@@ -399,7 +421,7 @@ def create_calendar_event(
 
                 created = (
                     service.events()
-                    .insert(calendarId=user.default_calendar_id, body=event_body)
+                    .insert(calendarId=calendar_id, body=event_body)
                     .execute()
                 )
                 return {"status": "success", "event_url": created.get("htmlLink", "")}
@@ -409,6 +431,7 @@ def create_calendar_event(
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",
@@ -504,6 +527,7 @@ def get_upcoming_events(telegram_id: int, max_results: int = 5) -> dict:
                 if user:
                     user.google_credentials = None
                     user.default_calendar_id = None
+                    user.timezone = None
                     db.commit()
             return {
                 "status": "error",

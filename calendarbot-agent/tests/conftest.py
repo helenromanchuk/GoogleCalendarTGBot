@@ -1,4 +1,5 @@
 import os
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -7,15 +8,8 @@ import pytest
 # Static Fernet key for encryption in tests
 TEST_ENCRYPTION_KEY = "u1n5HvzQrYsjaAf455NQdZSKzQR2NeSCsx-2I6snPbg="
 
-# Fixture to set required environment variables for the entire test session.
-@pytest.fixture(autouse=True, scope="session")
 def configure_test_environment():
-    """Configure environment variables before any tests run.
-
-    This ensures that the application code picks up the expected values without
-    relying on the developer's local environment. The fixture runs automatically
-    at session scope.
-    """
+    """Configure environment before test collection imports application modules."""
     os.environ["BOT_TOKEN"] = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
     os.environ["GOOGLE_CLIENT_ID"] = "test-client-id"
     os.environ["GOOGLE_CLIENT_SECRET"] = "test-client-secret"
@@ -24,6 +18,9 @@ def configure_test_environment():
     os.environ["BASE_URL"] = "http://testserver"
     os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
     os.environ["TESTING"] = "true"
+
+
+configure_test_environment()
 
 # Reset shared rate-limiter state before each test so multiple tests hitting
 # the same endpoints/users don't cumulatively trip the limits.

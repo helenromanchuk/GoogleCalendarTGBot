@@ -77,8 +77,6 @@ async def lifespan(app: FastAPI):
     # Startup — lazily import Telegram to avoid connection errors during ADK run/playground
     logging.basicConfig(level=logging.INFO)
     init_db()
-    from app.database import migrate_db
-    migrate_db()
 
     try:
         from app.telegram_app import bot, dp  # noqa: F401
@@ -86,7 +84,7 @@ async def lifespan(app: FastAPI):
         await bot.set_webhook(
             url=WEBHOOK_URL,
             secret_token=settings.webhook_secret,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
         )
         logger.info("Telegram webhook registered at %s", WEBHOOK_URL)
     except Exception as exc:
@@ -187,6 +185,7 @@ async def oauth2callback(request: Request):
             user = get_or_create_user(db, telegram_id)
             user.google_credentials = credentials_json
             user.default_calendar_id = "primary"
+            user.timezone = None
             db.commit()
 
         # Notify via Telegram bot

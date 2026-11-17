@@ -27,18 +27,17 @@ import os
 from google.adk.agents import Agent
 from google.adk.apps import App
 
-from app.tools import (
-    create_calendar_event,
-    get_google_auth_url,
-    get_user_auth_status,
-    get_user_calendars,
-    set_default_calendar,
-    get_upcoming_events,
-)
-
 # Use GOOGLE_API_KEY (AI Studio) for dev. For production set GOOGLE_GENAI_USE_VERTEXAI=True.
 # The .env file is loaded by config.py; we just ensure the correct env var is forwarded to ADK.
 from app.config import settings as _settings
+from app.tools import (
+    create_calendar_event,
+    get_google_auth_url,
+    get_upcoming_events,
+    get_user_auth_status,
+    get_user_calendars,
+    set_default_calendar,
+)
 
 if _settings.gemini_api_key and not os.environ.get("GOOGLE_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = _settings.gemini_api_key
@@ -51,13 +50,14 @@ You can understand messages written in English or Russian.
 ## Your workflow
 
 Each user message will start with a metadata prefix like:
-  [telegram_id=12345, today=2026-06-22]
+  [telegram_id=12345, today=2026-06-22] or [telegram_id=12345, today=2026-06-22, auth=ok]
 Extract telegram_id and today's date from this prefix.
 
 For EVERY user message, follow these steps in order:
 
-### Step 1 — Check authentication
-Call get_user_auth_status with the extracted telegram_id.
+### Step 1 — Check authentication (skip if auth=ok is in the prefix)
+If the metadata prefix contains `auth=ok`, the user is already authenticated and has a default calendar configured — DO NOT call get_user_auth_status, get_google_auth_url, get_user_calendars, or set_default_calendar; proceed directly to Step 2.
+Otherwise, call get_user_auth_status with the extracted telegram_id.
 - If NOT authenticated: call get_google_auth_url to generate an OAuth URL and tell the user:
   "Please connect your Google account first by clicking this link: <url>
   After connecting, send your message again."
