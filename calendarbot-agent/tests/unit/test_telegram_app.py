@@ -394,6 +394,10 @@ async def test_callback_calendar_selected() -> None:
         "Default calendar set to: <b>Primary Calendar</b> (Time Zone: <code>Europe/Moscow</code>, Default Duration: <code>60 min</code>)"
         in args[0]
     )
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 888004)
+        assert user.timezone == "Europe/Moscow"
+        assert user.timezone_fetched_at is not None
 
 
 @pytest.mark.asyncio
@@ -433,6 +437,10 @@ async def test_cmd_status_connected() -> None:
     assert "Europe/Moscow" in args[0]
     assert "Default Duration" in args[0]
     assert "60 minutes" in args[0]
+    with SessionLocal() as db:
+        user = get_or_create_user(db, 888005)
+        assert user.timezone == "Europe/Moscow"
+        assert user.timezone_fetched_at is not None
 
 
 @pytest.mark.asyncio
@@ -923,11 +931,16 @@ async def test_get_user_timezone_real_success(calendar_id) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("original_calendar_id", ["cal-1", None, ""])
 @pytest.mark.parametrize("new_timezone", [None, "Asia/Tokyo"])
-async def test_timezone_fetch_does_not_overwrite_switched_calendar_cache(
-    original_calendar_id, new_timezone
+@pytest.mark.parametrize("handler", ["lookup", "status", "selection"])
+async def test_timezone_metadata_handlers_do_not_overwrite_switched_calendar_cache(
+    original_calendar_id, new_timezone, handler
 ) -> None:
     from app.calendar_timezone import get_cached_timezone
-    from app.telegram_app import _get_user_timezone
+    from app.telegram_app import (
+        _get_user_timezone,
+        callback_calendar_selected,
+        cmd_status,
+    )
 
     telegram_id = 556204
     credentials = '{"token": "old"}'
@@ -959,7 +972,24 @@ async def test_timezone_fetch_does_not_overwrite_switched_calendar_cache(
             return_value=(service, refreshed_credentials),
         ),
     ):
-        assert await _get_user_timezone(telegram_id) == "Europe/Moscow"
+        if handler == "lookup":
+            assert await _get_user_timezone(telegram_id) == "Europe/Moscow"
+        elif handler == "status":
+            message = AsyncMock()
+            message.from_user.id = telegram_id
+            await cmd_status(message)
+            message.answer.assert_awaited_once()
+        else:
+            callback = AsyncMock()
+            callback.from_user.id = telegram_id
+            callback.data = "cal_0"
+            state = AsyncMock(spec=FSMContext)
+            state.get_data.return_value = {
+                "calendars": [{"id": original_calendar_id or "primary", "name": "Original Calendar"}]
+            }
+            await callback_calendar_selected(callback, state)
+            state.clear.assert_awaited_once()
+            callback.message.edit_text.assert_awaited_once()
         service.calendars.return_value.get.assert_called_once_with(
             calendarId=original_calendar_id or "primary"
         )

@@ -24,7 +24,6 @@ from google.genai import types as genai_types
 
 from app.agent import app as adk_app
 from app.calendar_timezone import (
-    cache_timezone,
     cache_timezone_if_calendar_matches,
     get_cached_timezone,
 )
@@ -301,7 +300,7 @@ async def cmd_status(message: types.Message) -> None:
                 summary = calendar_metadata.get("summary", "Unknown")
                 timezone = calendar_metadata.get("timeZone", "Unknown")
                 if timezone != "Unknown":
-                    cache_timezone(user, timezone)
+                    cache_timezone_if_calendar_matches(db, telegram_id, cal_id, timezone)
                     db.commit()
 
             escaped_summary = html.escape(summary)
@@ -498,7 +497,7 @@ async def callback_calendar_selected(
                     service.calendars().get(calendarId=chosen["id"]).execute()
                 )
                 timezone = calendar_metadata.get("timeZone", "UTC")
-                cache_timezone(user, timezone)
+                cache_timezone_if_calendar_matches(db, telegram_id, chosen["id"], timezone)
                 db.commit()
 
                 from app.database import get_calendar_duration
